@@ -127,15 +127,36 @@ passes with the patch.
 
 ## Adjacent IRIX gaps (separate from DWARF)
 
-* `Xsgi` (IP22NG1) has no `.debug_info` (only `.debug_frame`), so DWARF cannot supply
-  its symbols. Its function symbols live in SGI's proprietary symbol machinery:
-  `.msym` (`SHT_MIPS_MSYM`, 8,763 entries) and `.MIPS.symlib` (`SHT_MIPS_SYMBOL_LIB`),
-  with processor-specific `st_shndx`/`st_type` values (`PRC[0xff00..0xff02]`).
-  `ElfSymbol.hasProcessorSpecificSymbolSectionIndex()`/`MIPS_ElfExtension.calculateSymbolAddress()`
-  only handle `SHN_MIPS_ACOMMON`, `SHN_MIPS_TEXT` and `SHN_MIPS_DATA`, and `.msym`
-  entries are not read at all; hence a large fraction of functions are imported as
-  `FUN_*`. This needs an ELF symbol/section reader in the MIPS ELF extension, not a
-  DWARF change -- filed here for cross-reference with the symbol/loader work.
+`Xsgi` (IP22NG1, 6.5.7m) has no `.debug_info` (only `.debug_frame`), so DWARF cannot
+supply its names. Investigation of its symbol handling:
+
+* `Xsgi` is an `EXEC` whose `.symtab` is stripped; all names come from `.dynsym`
+  (8,763 entries). 3,852 `FUNC` symbols use `st_shndx = PRC[0xff01]` (`SHN_MIPS_TEXT`),
+  928 `OBJECT` use `PRC[0xff02]`, 4 use `PRC[0xff00]`, and the remaining 3,969 are
+  undefined. There is no symbol aliasing (all 3,852 function addresses are unique,
+  none zero-sized).
+* Stock Ghidra 12.1.2 **already applies all of them** via
+  `MIPS_ElfExtension.calculateSymbolAddress`, which handles `SHN_MIPS_ACOMMON`,
+  `SHN_MIPS_TEXT` and `SHN_MIPS_DATA`. A headless import yields 4,054/4,054 named
+  functions; full auto-analysis adds only 40 `FUN_*` (4,094 total), so the earlier
+  "only 2,391 defined FUNCs / mostly FUN_*" observation is not reproducible with this
+  binary and build. The `FUN_*` seen in a directory-wide sweep are most likely local
+  (non-exported) functions: global symbols live in `.dynsym`, but static functions
+  would only ever be in the stripped `.symtab`, and no `.msym`/`.symlib` data can
+  recover them.
+* `.msym` (`SHT_MIPS_MSYM`) is 8,763 x 8 bytes: per-`.dynsym`-entry hash metadata
+  (word 0 is a name hash; word 1 is a constant/version), i.e. a dynamic-linker lookup
+  accelerator with no independent names or addresses. `.MIPS.symlib`
+  (`SHT_MIPS_SYMBOL_LIB`) is exactly one byte per `.dynsym` entry (values 0/1/2), a
+  per-symbol flag table. Neither needs to be parsed to recover symbols.
+* The real gap found by sweeping the 6.5.7m objects: `SHN_MIPS_SUNDEFINED`
+  (`0xff04`, small undefined) and `SHN_MIPS_SCOMMON` (`0xff03`, small common) were
+  not defined or handled. 45 small-undefined symbols (eg. `GfxDevLimit`, `lbolt`,
+  `shmiq_lock`) were dropped as "Unable to place symbol"; `MIPS_ElfExtension` now maps
+  `SHN_MIPS_SUNDEFINED` to `Address.NO_ADDRESS` (allocated to the EXTERNAL block) and
+  treats `SHN_MIPS_SCOMMON` like `SHN_MIPS_ACOMMON`, per the MIPS ABI. Verified:
+  `GfxDevLimit` is now imported into the EXTERNAL block, and the Xsgi/libGLcore/unix
+  and GCC DWARF 5 imports are unchanged.
 
 ## Changed files
 
