@@ -101,9 +101,18 @@ public class DWARFAbbreviation {
 			DIEContainer dieContainer) throws IOException {
 		Map<Integer, DWARFAbbreviation> result = new HashMap<>();
 
-		// Read a list of abbreviations, terminated by a marker value that returns null from read()
+		// Read a list of abbreviations, terminated by a marker value that returns null from read().
+		// Two SGI MIPSpro quirks are also handled:
+		// 1) the final end-of-list marker may be omitted, so stop at end-of-stream.
+		// 2) each compilation unit's abbreviations are stored in a separate block, concatenated
+		//    in the section, with abbreviation codes restarting at 1.  A repeated code therefore
+		//    marks the start of the next block, so stop there.
 		DWARFAbbreviation abbrev = null;
-		while ((abbrev = DWARFAbbreviation.read(reader, dieContainer)) != null) {
+		while (reader.hasNext() &&
+			(abbrev = DWARFAbbreviation.read(reader, dieContainer)) != null) {
+			if (result.containsKey(abbrev.getAbbreviationCode())) {
+				break;
+			}
 			result.put(abbrev.getAbbreviationCode(), abbrev);
 		}
 
