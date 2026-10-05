@@ -1,0 +1,143 @@
+# SGI MIPSpro DWARF 2 parser notes
+
+Notes from adding support for the DWARF dialect emitted by the SGI MIPSpro compiler
+chain (IRIX 6.5.7m .. 6.5.22, `cc` 7.2-7.4) to Ghidra's DWARF analyzer
+(`Ghidra/Features/Base/src/main/java/ghidra/app/util/bin/format/dwarf`), pinned to
+Ghidra 12.1.2 (`Ghidra_12.1.2_build`, commit `c0f584bf229f`).
+
+## Symptom
+
+Importing any MIPSpro object aborted the DWARF analyzer during compilation-unit
+bootstrap:
+
+```
+java.io.EOFException
+  at ghidra.program.model.data.LEB128.read(LEB128.java:93)
+  at ...DWARFAbbreviation.read(DWARFAbbreviation.java:53)
+  at ...DWARFAbbreviation.readAbbreviations(DWARFAbbreviation.java:106)
+  at ...DIEContainer.getAbbrevs(DIEContainer.java:580)
+  at ...DWARFCompilationUnit.readV4(DWARFCompilationUnit.java:73)
+  at ...DWARFUnitHeader.read(DWARFUnitHeader.java:59)
+  at ...DIEContainer.bootstrapCompilationUnits(DIEContainer.java:264)
+```
+
+The `.debug_info` CU header itself is standard DWARF 2; the EOF happens while reading
+the `.debug_abbrev` table referenced by the CU.
+
+## Section container
+
+* Debug sections use `SHT_MIPS_DWARF` (`0x7000001e`), not `SHT_PROGBITS`. This type is
+  already registered by `MIPS_ElfExtension` and the ELF loader imports non-allocated
+  debug sections as overlay blocks by default (`Import Non-Loaded Data` = true), so no
+  loader change was required. Section contents in program memory are byte-identical to
+  the file (relocations only touch the usual address-bearing fields).
+* All observed fixtures are ELF32 big-endian with `e_flags` `EF_MIPS_ABI2` (N32) plus
+  `mips3`, i.e. 4-byte addresses in a 64-bit-register ABI. The matching Ghidra language
+  is `MIPS:BE:64:64-32addr` (O32 objects would use `MIPS:BE:32:default`).
+
+## `.debug_abbrev` quirks (the actual bug)
+
+MIPSpro emits an abbreviation section with two non-standard properties:
+
+1. **No end-of-table marker.** A standard table ends with an abbreviation code of 0.
+   MIPSpro ends the section immediately after the last entry's `(attr=0, form=0)`
+   attribute-list terminator. A reader that loops until it sees code 0 reads past EOF.
+
+2. **Per-CU blocks are concatenated, codes restart at 1.** For multi-CU binaries
+   (e.g. `libGLcore.so`, the `unix` kernel) each compilation unit's abbreviation set is
+   stored in a contiguous block; there is no separator between blocks. Abbreviation
+   codes restart at 1 in every block. Reading from one CU's `debug_abbrev_offset` to
+   EOF would absorb later blocks and `Map.put` would overwrite the earlier definitions
+   of codes 1..N.
+
+Both behaviours are visible in SGI's own libdwarf (`osprey/libdwarf/libdwarf/dwarf_abbrev.c`),
+whose parse loop is guarded by
+
+```c
+} while (abbrev_ptr < abbrev_section_end && (attr != 0 || attr_form != 0));
+```
+
+i.e. it treats end-of-section as end-of-table and reads `(attribute, form)` pairs,
+matching Ghidra's existing `DWARFAttributeDef.read` semantics.
+
+### Fix
+
+`DWARFAbbreviation.readAbbreviations()` now stops when the reader is exhausted and
+stops when it encounters an abbreviation code that has already been defined (the start
+of the next concatenated block). No dialect switch is needed: both rules are
+no-ops for well-formed standard tables, where codes are unique and the final code-0
+marker is present. The parser remains DWARF 2-5 compliant; this is why the change is
+unconditional rather than gated on `DW_AT_producer`/`.debug_funcnames`.
+
+`DWARF/Features/Base/src/test/java/.../DWARFAbbreviationTest.java` covers:
+standard terminated table, missing terminator, unknown vendor attribute id, and
+concatenated per-CU blocks (including reading a later block from its own offset).
+
+## What did *not* need changing
+
+* **CU header framing.** `unit_length`, `version=2`, `debug_abbrev_offset`,
+  `address_size=4`, root `DW_TAG_compile_unit`. Multi-CU sections chain normally.
+* **DIE attribute forms.** Only standard forms occur: `DW_FORM_string`, `data1`,
+  `data2`, `data4`, `flag`, `block`, `addr`, `ref4`, `strp`. Every DIE in every fixture
+  decoded to exactly the declared CU end offset.
+* **Vendor attributes.** `DW_AT_MIPS_fde (0x2001)` and `DW_AT_MIPS_has_inlines
+  (0x200b)` occur frequently; `DW_AT_MIPS_linkage_name (0x2007)` is already known to
+  Ghidra. Unknown ids (including SGI's `0x42` on compile units) map to a null
+  `DWARFAttributeId` and are skipped by the importer without aborting.
+* **Vendor tags.** No `DW_TAG_MIPS_loop (0x4081)` was observed. Standard
+  `DW_TAG_volatile_type (0x35)` and `DW_TAG_enumeration_type (0x04)` are already known
+  to Ghidra.
+* **Line tables.** All observed `.debug_line` programs are DWARF 2 standard, version 2,
+  `opcode_base=10`, standard opcode lengths, and only standard opcodes (special
+  opcodes plus `DW_LNE_set_address`/`DW_LNE_end_sequence`). No MIPSpro vendor line
+  opcodes appeared, so the line state machine was left untouched.
+* **`.debug_aranges`.** Ghidra's importer never reads it (the DWARF package contains no
+  reference to aranges); the "pairs start at header+16" observation is in fact the
+  standard `2*address_size` alignment for 4-byte addresses (12 -> 16), so there was no
+  deviation to accommodate.
+* **SGI-proprietary sections.** `.debug_funcnames`, `.debug_pubnames`,
+  `.debug_typenames` are not read by Ghidra; names/lines come from `.debug_info` and
+  `.debug_line`.
+
+## Residual diagnostics (not failures)
+
+* `DW_OP_breg29` frame-base expressions are reported as "un-recoverable" because the
+  static evaluator has no value for MIPS `$sp` at function entry
+  (`DWARFExpressionEvaluator.withStaticStackRegisterValues(null, ...)` leaves the stack
+  register unmapped). Import completes and line/type/name data is unaffected. Recovering
+  `$sp`-relative locals would need a static entry stack offset fed into the evaluator;
+  `mips.dwarf` maps DWARF reg 29 to `sp` and reg 30 to `s8` (no `stackframe` marker).
+* MIPSpro emits no `DW_TAG_formal_parameter` DIEs in the sampled kernel objects; they
+  carry names/lines/types but not parameter lists, so parameter recovery is limited by
+  what the compiler emitted, not by the parser.
+
+## Verification
+
+Fixtures (not committed, proprietary):
+
+| fixture | result |
+| --- | --- |
+| `gfx.o`, `ng1.a` (6 objs), `gr2.a` (7), `mgras.a` (15) | import clean; 1 CU each; all functions DWARF-named; line info present |
+| `libGLcore.so` 6.5.22 (151 CUs) and 6.5.7m (147 CUs) | import clean; ~3.1k functions, >3.0k DWARF-named |
+| `unix` 6.5.22 kernel (631 CUs, 34,812 DIEs) | import clean; 10,282/10,286 functions named; 12,763 DWARF data types (868 structs, 572 typedefs, 95 unions, 37 enums); 10,199 functions carry source info |
+| GCC 15 x86-64 `std.o` (DWARF 5) | before/after: identical (1 CU, 11 DIEs, 3 types, `int foo(S * s, int x)`) |
+
+`DWARFAbbreviationTest` fails on unpatched 12.1.2 (2 of 4 tests, EOFException) and
+passes with the patch.
+
+## Adjacent IRIX gaps (separate from DWARF)
+
+* `Xsgi` (IP22NG1) has no `.debug_info` (only `.debug_frame`), so DWARF cannot supply
+  its symbols. Its function symbols live in SGI's proprietary symbol machinery:
+  `.msym` (`SHT_MIPS_MSYM`, 8,763 entries) and `.MIPS.symlib` (`SHT_MIPS_SYMBOL_LIB`),
+  with processor-specific `st_shndx`/`st_type` values (`PRC[0xff00..0xff02]`).
+  `ElfSymbol.hasProcessorSpecificSymbolSectionIndex()`/`MIPS_ElfExtension.calculateSymbolAddress()`
+  only handle `SHN_MIPS_ACOMMON`, `SHN_MIPS_TEXT` and `SHN_MIPS_DATA`, and `.msym`
+  entries are not read at all; hence a large fraction of functions are imported as
+  `FUN_*`. This needs an ELF symbol/section reader in the MIPS ELF extension, not a
+  DWARF change -- filed here for cross-reference with the symbol/loader work.
+
+## Changed files
+
+* `Ghidra/Features/Base/src/main/java/ghidra/app/util/bin/format/dwarf/DWARFAbbreviation.java`
+* `Ghidra/Features/Base/src/test/java/ghidra/app/util/bin/format/dwarf/DWARFAbbreviationTest.java`
