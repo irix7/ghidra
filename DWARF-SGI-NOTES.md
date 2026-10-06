@@ -101,15 +101,21 @@ concatenated per-CU blocks (including reading a later block from its own offset)
 
 ## Residual diagnostics (not failures)
 
-* `DW_OP_breg29` frame-base expressions are reported as "un-recoverable" because the
-  static evaluator has no value for MIPS `$sp` at function entry
-  (`DWARFExpressionEvaluator.withStaticStackRegisterValues(null, ...)` leaves the stack
-  register unmapped). Import completes and line/type/name data is unaffected. Recovering
-  `$sp`-relative locals would need a static entry stack offset fed into the evaluator;
-  `mips.dwarf` maps DWARF reg 29 to `sp` and reg 30 to `s8` (no `stackframe` marker).
-* MIPSpro emits no `DW_TAG_formal_parameter` DIEs in the sampled kernel objects; they
-  carry names/lines/types but not parameter lists, so parameter recovery is limited by
-  what the compiler emitted, not by the parser.
+* `DW_OP_breg29`/`breg0`/`reg30` location expressions are now evaluated: `mips.dwarf`
+  supplies static `$sp`/`s8` values (`static_stack_pointer`, `stack_frame`) and the
+  evaluator handles the SGI idioms (commit "DWARF: evaluate SGI breg0/reg30/breg29
+  location idioms"), so recoverable locals and frame bases are no longer dropped.
+* **MIPSpro emits no `DW_TAG_formal_parameter` DIEs.**  Measured across the corpus
+  (libGLcore 6.5.7m 147-CU and 6.5.22 151-CU builds, the `unix` kernel, and
+  dmedia/tport/mouse/toolchain objects): every `DW_TAG_subprogram` has zero parameter
+  children (tag `0x05`).  Parameters are therefore recoverable only from ECOFF
+  `.mdebug` `stParam` records or by Ghidra calling-convention inference, never from
+  DWARF — an emission ceiling, not a parser gap.
+* **Type DIEs are emitted only where the compiler was asked.**  The `unix` kernel
+  carries `DW_TAG_structure_type`/`typedef`/`union_type`/`member`/`base_type` DIEs
+  (868 structs and 572 typedefs imported), but `libGLcore.so` (both builds) carries
+  none: its `.debug_info` is names + PC ranges + frame bases plus a handful of
+  file-scope variables.  Its "0 structs" is likewise a data ceiling.
 
 ## Verification
 
@@ -169,7 +175,9 @@ stubs by flow following, which truncates exactly the constructs LOCORE relies on
 * computed jumps into dispatch tables (`__glDTP_*` / `__glDTS_*` stubs inside
   `__glDepthTestLine_asm`, `bcopy`/`ovbcopy` inside `memcpy`);
 * entries scheduled into the previous function's `jr` delay slot
-  (`restartxthread`, `cache_sync` - upstream issue #4675);
+  (`restartxthread`, `cache_sync` - upstream issue #4675); the disassembler now resumes
+  at the slot fall-through so these bodies are complete, and a branch whose *target* is a
+  delay slot no longer crashes the native decompiler (see `IRIX-SUPPORT.md`);
 * nested `STT_FUNC` symbols from assembler `EXPORT` macros, which become functions
   and clip the parent at their entry (`CreateFunctionCmd.subtractBodyFromExisting`).
 

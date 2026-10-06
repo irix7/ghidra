@@ -20,13 +20,13 @@ ghidra-12.1.2 (tag Ghidra_12.1.2_build)
 | Hand-asm function bodies: DWARF `low_pc`/`high_pc` now applied to Ghidra bodies; nested non-DWARF entries demoted including strictly nested thunks; re-applied late so other analyzers cannot clip | **Done** | `DWARFFunctionImporter.java`, `DWARFFunctionBodyFixupAnalyzer.java`, `DWARFImportOptions` |
 | `.msym` / `.MIPS.symlib` | **Not needed** | They are per-`.dynsym` hash/flag tables; see `DWARF-SGI-NOTES.md`.  Stock Ghidra already applies all `SHN_MIPS_TEXT` symbols |
 | Jump tables / `UNRECOVERED_JUMPTABLE` (`jr t4`, gp-relative tables) | **Done** | `MipsInlineDispatchAnalyzer` recovers inline code tables and PC-relative pointer tables inside a function; `MipsIndirectTailCallAnalyzer` types bare `jr a1`/`jr a2` stubs as `CALL_RETURN` (minimal harvest of upstream PR #8547) |
-| Delay-slot function entries (entry is the previous function's `jr` delay slot) | **Partly covered** by body ranges; full flow fix upstream #4675 | `MipsDelaySlotFlowTest` characterises unconditional-slot entries (pass) and the conditional-slot block-model failure (ignored); bodies do not resolve block flow |
+| Delay-slot function entries (entry is the previous function's `jr` delay slot) | **Done** for disassembly/bodies; conditional-slot block flow still open | `EntryPointAnalyzer`+`Disassembler` resume at the slot fall-through so the entry's body decodes to its DWARF range (`restartxthread` 4 → 92 bytes); `MipsDelaySlotFlowTest`. A branch whose *target* is a delay slot previously crashed the native decompiler; fixed (see Design notes) |
 | Non-returning IRIX asm (`panic`, `sppanic`, `_r4600_2_0_cacheop_eret`) | **Done** | `MipsFunctionsThatDoNotReturn` + `noReturnFunctionConstraints.xml`; ECOFF import re-runs the known no-return pass on its own entries |
 | DWARF asm signature locking (`void f(void)` committed as definite for asm subprograms) | **Done** | `NO_PARAMS` commit mode leaves unknown signatures recoverable; upstream #9476 |
 | `.mdebug` / ECOFF for objects without DWARF | **Done** | `EcoffDebug.java` + `EcoffAnalyzer.java` (32-bit MIPS ELF `.mdebug`); late body fixup re-applies ranges; upstream #1379 never merged; #356 still open |
 | GP-relative (CPIC) model: `gp`/`t9` seeded at function entries so gp-relative GOT and small-data references resolve | **Done** | `MipsGpAnalyzer` seeds `gp` = `_mips_gp_value` and `t9` = function entry (PIC ABI); `MipsGotAnalyzer` renames GOT slots `__got_<target>`; measured on libGLcore: `unaff_gp` 7→0 and `(**(code **)` call spam 78→0 in a 121-function sample |
 | `.MIPS.stubs` / PLT as named thunks | **Done** | `MipsStubsAnalyzer` decodes the `ori t8,zero,symidx` delay slot and creates `name@plt` thunks to the imported functions |
-| `.mdebug` / ECOFF for objects without DWARF | **Done** | `EcoffDebug.java` + `EcoffAnalyzer.java` (32-bit MIPS ELF `.mdebug`); parameter/local records parsed and parameter names applied; remaining MIPS storage classes mapped for EXEC statics. Validated on unstripped Foundation-era media: `usr/lib/debug/libdmedia.so` 733/764 parameterised, `usr/lib/abi/libc.so` 592/1,310 (C-standard-exact prototypes); upstream #1379 never merged; #356 still open |
+| `.mdebug` / ECOFF for objects without DWARF | **Done** | `EcoffDebug.java` + `EcoffAnalyzer.java` (32-bit MIPS ELF `.mdebug`); parameter/local records parsed and parameter names applied; remaining MIPS storage classes mapped for EXEC statics; nested non-ECOFF entries inside an authoritative procedure range are demoted to labels (like the DWARF fixup) so parents keep their complete body. Validated on unstripped Foundation-era media: `usr/lib/debug/libdmedia.so` 733/764 parameterised, `usr/lib/abi/libc.so` 592/1,310 (C-standard-exact prototypes); upstream #1379 never merged; #356 still open |
 | N32 ABI conventions (struct returns, varargs, paired f/GPR argument slots) | **Done** | `mips64_32_n32.cspec` rewritten to the SGI MIPSpro N32 ABI (007-2816-005), cross-checked against clang 21 `-mabi=n32 -EB` codegen; `N32CallingConventionTest` |
 | Corpus regression harness | **Done** | `work/inventory/` — per-object inventory dumps, baseline + corpus TSV diffing; see AGENTS.md |
 | Native `ld` `.compact_rel` emission (o32) | **Researched** | `docs/irix/native-ld-compact-relocs.md` reverse-engineers the 7.3 linker's record format, sizing, and tags from an oracle link; fix direction is binutils-side. Ghidra-side needs nothing beyond the existing `DT_MIPS_COMPACT_SIZE` constant |
@@ -66,8 +66,9 @@ private `irix7/reference` repo (techpub archive, never published).
   subroutine-reference and constant-propagation analyzers create function entries after
   the DWARF import (priority 101) and would otherwise clip the bodies again.  ECOFF
   uses the same pattern: `EcoffAnalyzer` records authoritative procedure ranges and a
-  nested one-time fixup re-applies them without demotion, carving, or signature
-  changes.
+  nested one-time fixup re-applies them, demoting strictly-inside non-ECOFF entries to
+  labels (label-preserving, like the DWARF fixup) without carving user-owned functions
+  or changing signatures.
 * **Authoritative ranges cover, but do not re-disassemble.**  Restored ECOFF bodies may
   cover addresses left without instructions by later analysis; the fixup does not decode
   them late because that could clobber intentional data.
@@ -76,6 +77,16 @@ private `irix7/reference` repo (techpub archive, never published).
   functions reaching both a delayed branch and its slot may emit overlap diagnostics.
   Authoritative body ranges do not resolve these flow-model limits
   (`MipsDelaySlotFlowTest`, upstream #4675).
+* **Resolved:** a branch whose target is *inside* another branch's delay slot used to
+  crash the native decompiler (`Decompiler process died`).  Smallest case: `Xsgi` 6.5.7m
+  `ProcChangeHosts @0x100e1298`, where `b 0x100e131c` targets the delay slot of the `beq`
+  at `0x100e1318` (retargeting it to `0x100e1318` completes the decompile).  The branch
+  into the slot perturbs return-value inference so each `jr ra` is modelled returning a
+  16-byte `v0:v1` join; by heritage pass 5 that join-space Varnode can be dead (no
+  readers), and `Heritage::splitJoinRead` dereferenced its null `loneDescend()`.
+  `Heritage::processJoins` now skips a reader-less join Varnode — the one-line guard from
+  upstream `bb33bad196` (GP-7136), which this 12.1.2-based fork was missing.  A full
+  Xsgi-657m decompile sweep is now 7,140/7,140 (was 7,139/7,140).
 
 ## Verification workflow
 
@@ -116,8 +127,34 @@ Current results on the 6.5.22 `unix` kernel:
   `jr a1`/`jr a2` stubs are typed `CALL_RETURN` without touching shared tails.
 * Standard DWARF 5 `std.o` regression: identical before/after (`int foo(S * s, int x)`,
   1 struct, 11 DIEs).
+* Delay-slot entries: `restartxthread` (6.5.22 `unix`) now decodes its full 92-byte DWARF
+  range (was 4 bytes); `CheckAsmFlow` stays 366/366 and the corpus inventory is unchanged.
+* ECOFF nested entries: O32 `libc.so.1` `_nsproc` restored to its full range
+  (3,084/3,084 exact, 0 mismatched, 0 missing bytes); the O32 `libGLcore` smoke stays
+  3,218/3,218.  `libgl.so`'s 67 mismatches are ECOFF-vs-ECOFF `stEnd` overlaps (fall-through
+  stub families) and are left alone.
+* Native decompiler: `ProcChangeHosts` (Xsgi 6.5.7m) now decompiles; a full Xsgi-657m sweep
+  is 7,140/7,140 (was 7,139/7,140, the single failure being `ProcChangeHosts`).
+* IRIX 6.5.22 ABI: the driver-CD `IP22NG1/Xsgi` is a **6.5.22m** build despite the path
+  (it embeds `IRIX 6.5:...built .../6.5.22m/...`), and it is **N32** — `e_flags
+  0x20000024` (`EF_MIPS_ABI2`), language `MIPS:BE:64:64-32addr`, unlike the 6.5.7m IP22NG1
+  o32 objects.  Its `ProcXineramaShapeMask..NBE @0x103733d0` does *not* fail like
+  `ProcChangeHosts`: it is a recoverable decompiler error ("Trying to build dynamic symbol
+  on locked varnode", `funcdata_varnode.cc`), so the two named stalls are different classes.
 
 Build note: run `bash build-irix-patch.sh <writable-ghidra-12.1.2-directory>` to compile
 this fork's Java changes into `$DIST/Ghidra/patch` and copy the MIPS no-return data
 files.  A normal `gradle buildGhidra` is the upstream build path (the source checkout
 has no Gradle wrapper, so a system Gradle 8.x is required).
+
+The native decompiler is **not** rebuilt by `build-irix-patch.sh`; the fork also carries a
+`decompile/cpp` change (the GP-7136 join-Varnode guard), so after touching native sources
+rebuild it and install the binary into the distribution:
+
+```bash
+cd Ghidra/Features/Decompiler/src/decompile/cpp
+make CXX='g++ -std=c++11' ghidra_opt
+cp ghidra_opt <DIST>/Ghidra/Features/Decompiler/os/linux_x86_64/decompile
+```
+
+(The generated parser sources are committed, so bison/flex are not required.)
