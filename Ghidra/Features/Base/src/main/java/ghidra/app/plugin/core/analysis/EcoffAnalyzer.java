@@ -17,7 +17,9 @@ package ghidra.app.plugin.core.analysis;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.function.Consumer;
 
 import ghidra.app.cmd.disassemble.DisassembleCommand;
@@ -36,7 +38,9 @@ import ghidra.program.model.data.*;
 import ghidra.program.model.lang.Register;
 import ghidra.program.model.listing.*;
 import ghidra.program.model.mem.MemoryBlock;
+import ghidra.program.model.symbol.Namespace;
 import ghidra.program.model.symbol.SourceType;
+import ghidra.program.model.symbol.SymbolTable;
 import ghidra.util.exception.CancelledException;
 import ghidra.util.exception.DuplicateNameException;
 import ghidra.util.exception.InvalidInputException;
@@ -137,6 +141,23 @@ public class EcoffAnalyzer extends AbstractAnalyzer {
 		List<EcoffFunctionBodyFixupAnalyzer.FunctionBodyInfo> authoredBodies = new ArrayList<>();
 		AddressSet functionEntries = new AddressSet();
 		long[] parametersApplied = {0};
+		// All procedure entries authored by this .mdebug, resolved before any body work so
+		// an authoritative range that genuinely spans another ECOFF procedure can be told
+		// apart from one that merely spans non-ECOFF entries (stubs, labels).
+		AddressSet ecoffEntries = new AddressSet();
+		for (FileDescriptor file : debug.files()) {
+			for (Procedure pd : file.procedures()) {
+				Symbol sym = pd.symbol();
+				if (sym == null || !sym.isProcedure() || sym.isStab() ||
+					sym.storage() != EcoffDebug.SC_TEXT || sym.name().isEmpty()) {
+					continue;
+				}
+				Address e = address(program, relocatable, sym);
+				if (e != null) {
+					ecoffEntries.add(e);
+				}
+			}
+		}
 		for (FileDescriptor file : debug.files()) {
 			for (Procedure pd : file.procedures()) {
 				monitor.checkCanceled();
@@ -162,14 +183,20 @@ public class EcoffAnalyzer extends AbstractAnalyzer {
 						continue;
 					}
 					AddressSet body = null;
+					AddressSet full = null;
 					boolean placeholder = function != null &&
 						function.getBody().getNumAddresses() == 1 &&
 						!function.getSymbol().getSource().isHigherPriorityThan(SourceType.IMPORTED);
 					if (function == null || placeholder) {
 						boolean sized = pd.size() > 0 &&
 							pd.size() <= block.getEnd().subtract(entry) + 1 && (pd.size() & 3) == 0;
-						body = sized ? new AddressSet(entry, entry.add(pd.size() - 1)) :
-							new AddressSet(block.getStart(), block.getEnd());
+						if (sized) {
+							full = new AddressSet(entry, entry.add(pd.size() - 1));
+							body = new AddressSet(full);
+						}
+						else {
+							body = new AddressSet(block.getStart(), block.getEnd());
+						}
 						// Restrict decoding before following flow, not just the final function body.
 						AddressSet decode = new AddressSet(body);
 						AddressSet lookup = new AddressSet(body);
@@ -228,8 +255,21 @@ public class EcoffAnalyzer extends AbstractAnalyzer {
 						if (body != null && !function.getSymbol().getSource().isHigherPriorityThan(
 										SourceType.IMPORTED)) {
 							function.setBody(body);
+							// Record the full authored [entry, entry+size) when it does not
+							// genuinely span another ECOFF procedure or a user-owned entry:
+							// a non-ECOFF nested entry inside it is a label/subroutine the late
+							// fixup may demote, so the parent can keep its complete body.
+							AddressSet authored = new AddressSet(body);
+							if (full != null) {
+								AddressSet otherEcoff = ecoffEntries.intersect(full);
+								otherEcoff.delete(entry, entry);
+								if (otherEcoff.isEmpty() &&
+									!hasNonDemotableFunctionOverlapping(program, full, entry)) {
+									authored = new AddressSet(full);
+								}
+							}
 							authoredBodies.add(new EcoffFunctionBodyFixupAnalyzer.FunctionBodyInfo(
-								entry, new AddressSet(body), sym.name()));
+								entry, authored, sym.name()));
 						}
 						if (function.getRepeatableComment() == null && !file.name().isEmpty()) {
 							function.setRepeatableComment("ECOFF source: " + file.name());
@@ -271,6 +311,26 @@ public class EcoffAnalyzer extends AbstractAnalyzer {
 			knownNoReturn.added(program, functionEntries, monitor, log);
 		}
 		return authoredBodies;
+	}
+
+	/**
+	 * Returns true when a function other than the ECOFF entry itself overlaps the given range
+	 * and would not be demoted by the late fixup (it is a thunk or user-owned). Such a range
+	 * must not be recorded as authoritative, because the fixup could neither demote that
+	 * function nor restore a body that overlaps it.
+	 */
+	private static boolean hasNonDemotableFunctionOverlapping(Program program, AddressSet range,
+			Address entry) {
+		var functions = program.getFunctionManager().getFunctionsOverlapping(range);
+		while (functions.hasNext()) {
+			Function other = functions.next();
+			if (!other.getEntryPoint().equals(entry) &&
+				(other.isThunk() ||
+					other.getSymbol().getSource().isHigherPriorityThan(SourceType.IMPORTED))) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	private void importSymbol(Program program, boolean relocatable, Symbol sym, MessageLog log) {
@@ -551,9 +611,13 @@ public class EcoffAnalyzer extends AbstractAnalyzer {
 	 * instance of this analyzer is scheduled at {@link AnalysisPriority#LOW_PRIORITY} so the
 	 * recorded bodies are restored after those analyzers have run.
 	 * <p>
-	 * Unlike the DWARF fixup, nested non-ECOFF functions are never demoted. An overlap only
-	 * skips that restore with a warning, so user-owned and analyzer-owned bodies are never
-	 * carved. Signatures are never touched.
+	 * Nested non-ECOFF entries are demoted to labels (name preserved) when they sit strictly
+	 * inside an authoritative ECOFF range, following the DWARF fixup. The ECOFF range
+	 * describes the whole assembled procedure; the nested entry is a mid-body label, an
+	 * assembler stub or an imported function stub, so the parent keeps its complete body
+	 * while branch targets and address-taken references still resolve. User-owned functions
+	 * (higher priority than {@link SourceType#IMPORTED}) and thunks are never demoted, and
+	 * signatures are never touched.
 	 */
 	public static final class EcoffFunctionBodyFixupAnalyzer extends AbstractAnalyzer {
 
@@ -599,6 +663,36 @@ public class EcoffAnalyzer extends AbstractAnalyzer {
 			}
 			FunctionManager functionMgr = program.getFunctionManager();
 			AddressSetView loaded = program.getMemory().getLoadedAndInitializedAddressSet();
+
+			AddressSet authored = new AddressSet();
+			Set<Address> entries = new HashSet<>();
+			for (FunctionBodyInfo info : funcBodies) {
+				if (!info.body().isEmpty()) {
+					authored.add(info.body());
+				}
+				entries.add(info.entry());
+			}
+			// Demote non-ECOFF entries nested strictly inside an authoritative ECOFF range,
+			// keeping the name as a label so intra-procedure branches and address-taken
+			// references still resolve. User functions and thunks are never demoted.
+			if (!authored.isEmpty()) {
+				List<Function> toDemote = new ArrayList<>();
+				FunctionIterator functions = functionMgr.getFunctions(authored, true);
+				while (functions.hasNext()) {
+					Function function = functions.next();
+					Address entry = function.getEntryPoint();
+					if (authored.contains(entry) && !entries.contains(entry) &&
+						!function.isExternal() && !function.isThunk() &&
+						!function.getSymbol().getSource()
+								.isHigherPriorityThan(SourceType.IMPORTED)) {
+						toDemote.add(function);
+					}
+				}
+				for (Function function : toDemote) {
+					demoteToLabel(functionMgr, program.getSymbolTable(), function, warn);
+				}
+			}
+
 			List<FunctionBodyInfo> retry = new ArrayList<>();
 			for (FunctionBodyInfo info : funcBodies) {
 				if (!setFunctionBody(functionMgr, info, loaded)) {
@@ -610,6 +704,37 @@ public class EcoffAnalyzer extends AbstractAnalyzer {
 					warn.accept("ECOFF: unable to restore body of function %s @ %s (overlap)"
 							.formatted(info.name(), info.entry()));
 				}
+			}
+		}
+
+		/**
+		 * Removes the function and re-creates its name as an {@link SourceType#IMPORTED} label,
+		 * preserving the namespace. Does nothing if removal is refused.
+		 *
+		 * @param functionMgr function manager
+		 * @param symbolTable symbol table
+		 * @param function nested function to demote
+		 * @param warn receives a diagnostic if the label cannot be created
+		 */
+		private static void demoteToLabel(FunctionManager functionMgr, SymbolTable symbolTable,
+				Function function, Consumer<String> warn) {
+			Address entry = function.getEntryPoint();
+			String name = function.getName();
+			Namespace namespace = function.getParentNamespace();
+			if (!functionMgr.removeFunction(entry)) {
+				return;
+			}
+			try {
+				for (ghidra.program.model.symbol.Symbol symbol : symbolTable.getSymbols(entry)) {
+					if (name.equals(symbol.getName())) {
+						return;
+					}
+				}
+				symbolTable.createLabel(entry, name, namespace, SourceType.IMPORTED);
+			}
+			catch (InvalidInputException e) {
+				warn.accept("ECOFF: failed to convert function %s @ %s to a label"
+						.formatted(name, entry));
 			}
 		}
 
