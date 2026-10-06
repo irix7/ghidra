@@ -25,6 +25,7 @@ import java.nio.charset.StandardCharsets;
 import ghidra.app.cmd.function.CallDepthChangeInfo;
 import ghidra.docking.settings.SettingsImpl;
 import ghidra.program.disassemble.Disassembler;
+import ghidra.app.plugin.processors.sleigh.SleighInstructionPrototype;
 import ghidra.program.model.address.*;
 import ghidra.program.model.data.*;
 import ghidra.program.model.lang.*;
@@ -227,7 +228,31 @@ public class DecompileCallback {
 				}
 			}
 
-			instr.getPrototype()
+			InstructionPrototype prototype = instr.getPrototype();
+			// IRIX LOCORE idiom: a function entry scheduled in the preceding branch's
+			// delay slot, or a function body that reaches both a delayed branch and its
+			// slot independently.  Emit the branch p-code without bundling the delay slot
+			// so the slot is fetched separately through the fall-through edge; bundling it
+			// makes the decompiler diagnose the slot as overlapping instructions.
+			if (prototype.getDelaySlotByteCount() > 0 && funcEntry != null) {
+				Address slotStart = instr.getMaxAddress().next();
+				Address slotEnd =
+					instr.getMaxAddress().add(prototype.getDelaySlotByteCount());
+				boolean slotIsEntry = funcEntry.compareTo(slotStart) >= 0 &&
+					funcEntry.compareTo(slotEnd) <= 0;
+				boolean slotInBody = false;
+				if (!slotIsEntry) {
+					Function func = program.getFunctionManager().getFunctionAt(funcEntry);
+					slotInBody = func != null && func.getBody().intersects(slotStart, slotEnd);
+				}
+				if ((slotIsEntry || slotInBody) &&
+					prototype instanceof SleighInstructionPrototype sleighProto) {
+					sleighProto.getPcodePackedNoDelaySlot(resultEncoder,
+						instr.getInstructionContext(), new InstructionPcodeOverride(instr));
+					return;
+				}
+			}
+			prototype
 					.getPcodePacked(resultEncoder, instr.getInstructionContext(),
 						new InstructionPcodeOverride(instr));
 			return;
