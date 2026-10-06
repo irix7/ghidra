@@ -1040,10 +1040,31 @@ public class SleighInstructionPrototype implements InstructionPrototype {
 	@Override
 	public void getPcodePacked(PatchEncoder encoder, InstructionContext context,
 			PcodeOverride override) throws IOException {
+		getPcodePackedInternal(encoder, context, override, true);
+	}
+
+	/**
+	 * Emits this instruction's p-code without bundling the delay-slot instructions.
+	 * The delay-slotted instructions are then emitted separately (the decompiler fetches
+	 * them via the fall-through edge).  This avoids the overlapping-instruction diagnosis
+	 * when a delay-slotted instruction is itself a function entry point (IRIX LOCORE idiom).
+	 *
+	 * @param encoder the encoder
+	 * @param context the instruction context
+	 * @param override the p-code override
+	 * @throws IOException if an IO error occurs
+	 */
+	public void getPcodePackedNoDelaySlot(PatchEncoder encoder, InstructionContext context,
+			PcodeOverride override) throws IOException {
+		getPcodePackedInternal(encoder, context, override, false);
+	}
+
+	private void getPcodePackedInternal(PatchEncoder encoder, InstructionContext context,
+			PcodeOverride override, boolean packDelaySlots) throws IOException {
 		int fallOffset = getLength();
 		try {
 			SleighParserContext protoContext = (SleighParserContext) context.getParserContext();
-			if (delaySlotByteCnt > 0) {
+			if (packDelaySlots && delaySlotByteCnt > 0) {
 				int bytecount = 0;
 				do {
 					Address addr = context.getAddress().add(fallOffset);

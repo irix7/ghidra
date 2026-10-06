@@ -140,7 +140,7 @@ public class MipsDelaySlotFlowTest extends AbstractGhidraHeadlessIntegrationTest
 	}
 
 	@Test
-	public void testBothEntryPathsProduceCorrectValuesWithOverlapWarning() throws Exception {
+	public void testBothEntryPathsDecompileWithoutOverlapWarning() throws Exception {
 		predecessor("08 00 04 08");
 		// beq a0,zero,1004; nop; j 1000; nop
 		builder.setBytes("1040", "10 80 ff f0 00 00 00 00 08 00 04 00 00 00 00 00");
@@ -153,8 +153,9 @@ public class MipsDelaySlotFlowTest extends AbstractGhidraHeadlessIntegrationTest
 		String c = decompile(function);
 		assertTrue(c, c.contains("return 7;"));
 		assertTrue(c, c.contains("return 8;"));
-		// Bundled jump/slot p-code is still diagnosed as overlapping instructions.
-		assertTrue(c, c.contains("overlaps instruction"));
+		// The delay slot is emitted separately for the decompiler, so the entry
+		// paths no longer produce an overlapping-instruction diagnosis.
+		assertFalse(c, c.contains("overlaps instruction"));
 	}
 
 	@Ignore("Known limitation: block models merge a conditional branch and its independently entered slot")
