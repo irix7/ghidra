@@ -19,7 +19,7 @@ ghidra-12.1.2 (tag Ghidra_12.1.2_build)
 | SGI `SHN_MIPS_*` symbols: small-undefined (0xff04) was dropped, small-common (0xff03) unhandled | **Done** | `MIPS_ElfExtension.java`, `MIPS_ElfExtensionTest` |
 | Hand-asm function bodies: DWARF `low_pc`/`high_pc` now applied to Ghidra bodies; nested non-DWARF entries demoted; re-applied late so other analyzers cannot clip | **Done** | `DWARFFunctionImporter.java`, `DWARFFunctionBodyFixupAnalyzer.java`, `DWARFImportOptions` |
 | `.msym` / `.MIPS.symlib` | **Not needed** | They are per-`.dynsym` hash/flag tables; see `DWARF-SGI-NOTES.md`.  Stock Ghidra already applies all `SHN_MIPS_TEXT` symbols |
-| Jump tables / `UNRECOVERED_JUMPTABLE` (`jr t4`, gp-relative tables) | **Open** | harvest PR #8547 or port the N64Recomp `JumpTable` scanner |
+| Jump tables / `UNRECOVERED_JUMPTABLE` (`jr t4`, gp-relative tables) | **Partly done** | `MipsInlineDispatchAnalyzer` recovers inline code tables and PC-relative pointer tables inside a function; remaining warnings are register-argument stubs/shared tails.  Harvest PR #8547 for indirect tail-call typing (`jr a2`/`jr a1`) |
 | Delay-slot function entries (entry is the previous function's `jr` delay slot) | **Mostly covered** by body ranges; full flow fix upstream #4675 | `Disassembler` `AddressSet` overload skips already-defined entries |
 | Non-returning IRIX asm (`panic`, `sppanic`, `_r4600_2_0_cacheop_eret`) | **Open** | add names to the MIPS no-return data list; consider disabling `FindNoReturnFunctionsAnalyzer` flow repair for kernel projects (#1981 churn) |
 | DWARF asm signature locking (`void f(void)` committed as definite for asm subprograms) | **Open** | upstream #9476; MIPSpro emits no parameters, so signatures are currently declared `void(void)` |
@@ -81,6 +81,10 @@ Current results on the 6.5.22 `unix` kernel:
   entries are labels); 12,763 DWARF types (868 structs, 572 typedefs).
 * Hand-asm functions: **365/366 exactly match their DWARF body ranges** (baseline 285/366,
   with 52 clipped at nested entries and 24 disassembly gaps).
+* Inline dispatch: the `emulate_lwc1/ldc1/swc1/sdc1` and `fpunit_fp*load/store_{s,d}`
+  families now decompile as switches; "Could not recover jumptable" dropped from 16 to 9
+  in the 366-function sample (the remainder are register-argument jump stubs and shared
+  tails, not tables).
 * Standard DWARF 5 `std.o` regression: identical before/after (`int foo(S * s, int x)`,
   1 struct, 11 DIEs).
 

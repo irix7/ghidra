@@ -194,6 +194,35 @@ parent `_asm` blob (they remain addressable labels).
 Standard DWARF 5 `std.o` is unchanged by the option; the option restores the old
 flow-derived behaviour when disabled.
 
+### Inline dispatch tables
+
+A second hand-asm idiom survives the body fixup as a decompiler warning: a computed jump
+into handlers that follow the dispatcher inside the same function.
+
+```
+lui   t4,0x8800
+addiu t4,t4,0x6db8      ; handler table base
+sll   t5,a0,0x3         ; index * 8
+addu  t4,t4,t5
+jr    t4                ; "Could not recover jumptable ... Too many branches"
+_nop
+```
+
+The table is code, and the index is an unbounded parameter, so neither flow following
+nor the decompiler's jump-table model recovery can bound it.  `MipsInlineDispatchAnalyzer`
+(MIPS module) recognises the address computation by backtracking over register views
+(`t4_lo` vs `t4`), disassembles the handler entries, and writes a `JumpTable` override
+plus `COMPUTED_JUMP` references so the decompiler renders a switch.  A second form loads
+the target from a PC-relative pointer table (`sll/addiu/addu/lw/jr`); those entries are
+also followed, but only when the loaded pointers land inside the containing function.
+
+Results on the 6.5.22 `unix` kernel: the `emulate_lwc1/ldc1/swc1/sdc1` and
+`fpunit_fp*load/store_{s,d}` families decompile as switches; "Could not recover
+jumptable" in the 366-function hand-asm sample dropped from 16 to 9.  The remaining
+cases are not tables: register-argument jump stubs (`jr a2`, `jr a1`), return
+trampolines computed from `ra` (`jr ra - 0x20000000` in `runcached`/`uncached`), and
+shared tails (`resumeidle`, `exception`).
+
 ## Changed files
 
 * `Ghidra/Features/Base/src/main/java/ghidra/app/util/bin/format/dwarf/DWARFAbbreviation.java`
