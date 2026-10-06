@@ -2296,6 +2296,7 @@ void Heritage::processJoins(void)
     if (joinrec->getUnified().size != vn->getSize())
       throw LowlevelError("Joined varnode does not match size of record");
     if (vn->isFree()) {
+      if (vn->hasNoDescend()) continue;		// Its possible vn is dead
       if (joinrec->isFloatExtension())
 	floatExtensionRead(vn,joinrec);
       else
