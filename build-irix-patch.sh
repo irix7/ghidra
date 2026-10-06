@@ -47,4 +47,5 @@ cp "$BASE/data/noReturnFunctionConstraints.xml" "$BASE/data/MipsFunctionsThatDoN
     "$DIST/Ghidra/Features/Base/data/"
 cp "$MIPS/data/languages/mips.dwarf" "$DIST/Ghidra/Processors/MIPS/data/languages/"
 cp "$MIPS/data/languages/mips64_32_n32.cspec" "$DIST/Ghidra/Processors/MIPS/data/languages/"
+cp "$MIPS/data/languages/mips64_32_o32.cspec" "$DIST/Ghidra/Processors/MIPS/data/languages/"
 printf 'IRIX patch compiled into %s\n' "$PATCH"

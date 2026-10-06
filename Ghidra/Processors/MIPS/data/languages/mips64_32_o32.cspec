@@ -23,7 +23,7 @@
      <default_alignment value="1" />
      <default_pointer_alignment value="4" />
      <pointer_size value="4" />
-     <wchar_size value="2" />
+     <wchar_size value="4" /> <!-- o32/N32: typedef long wchar_t (ABI supplement fig 6-40) -->
      <short_size value="2" />
      <integer_size value="4" />
      <long_size value="4" />
