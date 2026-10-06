@@ -21,7 +21,7 @@ upstream's own `NO_PARAMS` signature handling (GP-6667, Rust/DWARF).
 | `.mdebug` / ECOFF for objects without DWARF | **Done** | `EcoffDebug.java` + `EcoffAnalyzer.java` (32-bit MIPS ELF `.mdebug`); late body fixup re-applies ranges; upstream #1379 never merged; #356 still open |
 | GP-relative (CPIC) model: `gp`/`t9` seeded at function entries so gp-relative GOT and small-data references resolve | **Done** | `MipsGpAnalyzer` seeds `gp` = `_mips_gp_value` and `t9` = function entry (PIC ABI); `MipsGotAnalyzer` renames GOT slots `__got_<target>`; measured on libGLcore: `unaff_gp` 7→0 and `(**(code **)` call spam 78→0 in a 121-function sample |
 | `.MIPS.stubs` / PLT as named thunks | **Done** | `MipsStubsAnalyzer` decodes the `ori t8,zero,symidx` delay slot and creates `name@plt` thunks to the imported functions |
-| `.mdebug` / ECOFF for objects without DWARF | **Done** | `EcoffDebug.java` + `EcoffAnalyzer.java` (32-bit MIPS ELF `.mdebug`); parameter/local records parsed and parameter names applied; remaining MIPS storage classes mapped for EXEC statics; upstream #1379 never merged; #356 still open |
+| `.mdebug` / ECOFF for objects without DWARF | **Done** | `EcoffDebug.java` + `EcoffAnalyzer.java` (32-bit MIPS ELF `.mdebug`); parameter/local records parsed and parameter names applied; remaining MIPS storage classes mapped for EXEC statics. Validated on unstripped Foundation-era media: `usr/lib/debug/libdmedia.so` 733/764 parameterised, `usr/lib/abi/libc.so` 592/1,310 (C-standard-exact prototypes); upstream #1379 never merged; #356 still open |
 | N32 ABI conventions (struct returns, varargs, paired f/GPR argument slots) | **Done** | `mips64_32_n32.cspec` rewritten to the SGI MIPSpro N32 ABI (007-2816-005), cross-checked against clang 21 `-mabi=n32 -EB` codegen; `N32CallingConventionTest` |
 | Corpus regression harness | **Done** | `work/inventory/` — per-object inventory dumps, baseline + corpus TSV diffing; see AGENTS.md |
 | IRIX `libc.so.1` loader parse (#1527, `.MIPS.options`) | **Untested** | our fixtures parse; libc.so.1 should be added to the smoke matrix |
@@ -80,6 +80,10 @@ Fixtures are proprietary and must never be committed.  Local fixtures used:
 * `libGLcore.so` 6.5.7m / 6.5.22
 * `unix` 6.5.22 kernel (`/mnt/europa/sgi-mame/irix-drivers/unix`)
 * `Xsgi` IP22NG1, plus a GCC 15 x86-64 DWARF 5 object as the standard-DWARF regression
+* Unstripped Foundation-era debug libraries (`.mdebug` stParam validation), from the
+  `IRIX 6.5 Development Libraries (June 1998)` CD's dist archives (extract with the
+  `irix7/project` `scripts/irix-media/dumpz.py` tooling): `usr/lib/debug/libdmedia.so`,
+  `usr/lib/abi/libc.so`
 
 Scripts live in `work/scripts/` on the development host (not committed):
 `Classify.java` (compare hand-asm bodies to DWARF ranges), `VerifyDwarf.java`,
