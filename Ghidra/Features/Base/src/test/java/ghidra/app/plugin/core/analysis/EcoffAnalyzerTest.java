@@ -77,9 +77,16 @@ public class EcoffAnalyzerTest {
 	}
 
 	@Test
+	public void testProcedureAndExceptionStorageClassesMapToText() {
+		Program p = relocatableProgram();
+		assertEquals(space.getAddress(0x10008), EcoffAnalyzer.address(p, true, symbol(8, 25)));
+		assertNull(EcoffAnalyzer.address(p, true, symbol(0x100, 25)));
+	}
+
+	@Test
 	public void testUndefinedCommonRegistersAndOffsetsAreNotAddresses() {
 		Program p = relocatableProgram();
-		for (int sc : new int[] {0, 4, 5, 6, 7, 8, 9, 11, 16, 17, 18, 19, 21}) {
+		for (int sc : new int[] {0, 4, 5, 6, 7, 8, 9, 11, 16, 17, 18, 19, 21, 23, 24, 27}) {
 			assertNull(EcoffAnalyzer.address(p, true, symbol(8, sc)));
 		}
 	}

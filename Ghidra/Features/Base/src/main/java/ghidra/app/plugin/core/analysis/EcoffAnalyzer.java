@@ -33,10 +33,13 @@ import ghidra.app.util.opinion.ElfLoader;
 import ghidra.program.database.function.OverlappingFunctionException;
 import ghidra.program.model.address.*;
 import ghidra.program.model.data.*;
+import ghidra.program.model.lang.Register;
 import ghidra.program.model.listing.*;
 import ghidra.program.model.mem.MemoryBlock;
 import ghidra.program.model.symbol.SourceType;
 import ghidra.util.exception.CancelledException;
+import ghidra.util.exception.DuplicateNameException;
+import ghidra.util.exception.InvalidInputException;
 import ghidra.util.task.TaskMonitor;
 
 /** Automatically discovered by Ghidra's Analyzer class search. */
@@ -133,6 +136,7 @@ public class EcoffAnalyzer extends AbstractAnalyzer {
 		throws CancelledException {
 		List<EcoffFunctionBodyFixupAnalyzer.FunctionBodyInfo> authoredBodies = new ArrayList<>();
 		AddressSet functionEntries = new AddressSet();
+		long[] parametersApplied = {0};
 		for (FileDescriptor file : debug.files()) {
 			for (Procedure pd : file.procedures()) {
 				monitor.checkCanceled();
@@ -230,8 +234,10 @@ public class EcoffAnalyzer extends AbstractAnalyzer {
 						if (function.getRepeatableComment() == null && !file.name().isEmpty()) {
 							function.setRepeatableComment("ECOFF source: " + file.name());
 						}
-						// Importing a return type locks the entire signature. Do not import it
-						// until ECOFF parameter import is supported.
+						// The return type is deliberately left alone: aux TIR return records are
+						// unreliable (eg. void for malloc in GDB's experience), and the parameter
+						// import above already establishes the signature when records exist.
+						importParameters(program, function, pd, parametersApplied, log);
 					}
 				}
 				catch (Exception e) {
@@ -249,6 +255,10 @@ public class EcoffAnalyzer extends AbstractAnalyzer {
 		for (Symbol sym : debug.externals()) {
 			monitor.checkCanceled();
 			importSymbol(program, relocatable, sym, log);
+		}
+		if (parametersApplied[0] > 0) {
+			log.appendMsg("ECOFF .mdebug parameters",
+				parametersApplied[0] + " parameter(s) imported from stParam records");
 		}
 		// The normal known no-return pass precedes ECOFF's format-analysis priority.
 		// Reuse its configured rules only at function entries processed by this import.
@@ -297,16 +307,174 @@ public class EcoffAnalyzer extends AbstractAnalyzer {
 		}
 	}
 
+	/**
+	 * Applies the stParam records of one ECOFF procedure as named function parameters.
+	 * The signature is only replaced when neither it nor any existing parameter is
+	 * user-owned, and the whole replacement is abandoned if Ghidra rejects the names
+	 * (duplicates) or the storages (overlaps), leaving the signature untouched.
+	 *
+	 * @param program program to update
+	 * @param function procedure owning the parameters
+	 * @param pd ECOFF procedure descriptor with the parsed stParam records
+	 * @param applied accumulator for the import-wide count of applied parameters
+	 * @param log receives diagnostics
+	 */
+	private void importParameters(Program program, Function function, Procedure pd, long[] applied,
+			MessageLog log) {
+		if (pd.parameters().isEmpty() || function.isThunk() ||
+			function.getSignatureSource().isHigherPriorityThan(SourceType.IMPORTED)) {
+			return;
+		}
+		for (Parameter existing : function.getParameters()) {
+			if (existing.getSource().isHigherPriorityThan(SourceType.IMPORTED)) {
+				return;
+			}
+		}
+		List<Parameter> params = new ArrayList<>(pd.parameters().size());
+		for (Symbol record : pd.parameters()) {
+			if (record.isStab() || record.name().isEmpty()) {
+				continue;
+			}
+			VariableStorage storage = parameterStorage(program, record);
+			if (storage == null) {
+				log.appendMsg("ECOFF parameter " + record.name(),
+					"unsupported storage (sc=%d, value=0x%x)".formatted(
+						record.storage(), record.value()));
+				continue;
+			}
+			DataType type = dataType(program, record.type());
+			if (type == null) {
+				type = program.getDefaultPointerSize() == 8 ? Undefined8DataType.dataType
+															: Undefined4DataType.dataType;
+			}
+			// scVar/scVarRegister pass the argument by reference: the storage holds a
+			// pointer to the value, not the value itself.
+			if (record.storage() == EcoffDebug.SC_VAR ||
+				record.storage() == EcoffDebug.SC_VAR_REGISTER) {
+				type = new PointerDataType(type, program.getDataTypeManager());
+			}
+			try {
+				params.add(
+					new ParameterImpl(record.name(), type, storage, program, SourceType.IMPORTED));
+			}
+			catch (InvalidInputException e) {
+				log.appendMsg("ECOFF parameter " + record.name(), e.getMessage());
+			}
+		}
+		if (params.isEmpty()) {
+			return;
+		}
+		try {
+			function.replaceParameters(Function.FunctionUpdateType.CUSTOM_STORAGE, false,
+				SourceType.IMPORTED, params.toArray(new Parameter[0]));
+			applied[0] += params.size();
+			log.appendMsg("ECOFF parameters " + function.getName(), params.size() +
+				" parameter(s) imported into " + function.getEntryPoint());
+		}
+		catch (DuplicateNameException | InvalidInputException e) {
+			log.appendMsg("ECOFF parameters " + function.getName(), e.getMessage());
+		}
+	}
+
+	/**
+	 * Decodes the storage of one stParam record: scRegister/scVarRegister values are
+	 * register numbers, any other storage class carries a frame offset from the
+	 * virtual frame pointer, which IRIX places at the stack pointer of function entry.
+	 * Returns {@code null} when the record cannot be represented.
+	 */
+	static VariableStorage parameterStorage(Program program, Symbol record) {
+		int storage = record.storage();
+		if (storage == EcoffDebug.SC_REGISTER || storage == EcoffDebug.SC_VAR_REGISTER) {
+			Register register = parameterRegister(program, record.value());
+			if (register == null) {
+				return null;
+			}
+			try {
+				return new VariableStorage(program, register);
+			}
+			catch (InvalidInputException e) {
+				return null;
+			}
+		}
+		long offset = record.value();
+		if (offset > Integer.MAX_VALUE) {
+			return null;
+		}
+		int size = 4;
+		DataType type = dataType(program, record.type());
+		if (type != null && type.getLength() > 0) {
+			size = type.getLength();
+		}
+		try {
+			return new VariableStorage(program, (int)offset, size);
+		}
+		catch (InvalidInputException e) {
+			return null;
+		}
+	}
+
+	/**
+	 * Maps an ECOFF register number to a MIPS register: 0-31 are the general registers
+	 * (a0-a3 for the argument registers 4-7), 32 and above are the floating-point
+	 * registers (f0 at 32), per GDB's ecoff register mapping.
+	 */
+	private static Register parameterRegister(Program program, long value) {
+		String name;
+		if (value < 32) {
+			name = switch ((int)value) {
+				case 0 -> "zero";
+				case 1 -> "at";
+				case 2 -> "v0";
+				case 3 -> "v1";
+				case 4 -> "a0";
+				case 5 -> "a1";
+				case 6 -> "a2";
+				case 7 -> "a3";
+				case 8 -> "t0";
+				case 9 -> "t1";
+				case 10 -> "t2";
+				case 11 -> "t3";
+				case 12 -> "t4";
+				case 13 -> "t5";
+				case 14 -> "t6";
+				case 15 -> "t7";
+				case 16 -> "s0";
+				case 17 -> "s1";
+				case 18 -> "s2";
+				case 19 -> "s3";
+				case 20 -> "s4";
+				case 21 -> "s5";
+				case 22 -> "s6";
+				case 23 -> "s7";
+				case 24 -> "t8";
+				case 25 -> "t9";
+				case 26 -> "k0";
+				case 27 -> "k1";
+				case 28 -> "gp";
+				case 29 -> "sp";
+				case 30 -> "s8";
+				case 31 -> "ra";
+				default -> null;
+			};
+		}
+		else {
+			name = value < 64 ? "f" + (value - 32) : null;
+		}
+		return name == null ? null : program.getLanguage().getRegister(name);
+	}
+
 	static Address address(Program program, boolean relocatable, Symbol sym) {
 		String section = switch (sym.storage()) {
-			case EcoffDebug.SC_TEXT -> ".text";
+			case EcoffDebug.SC_TEXT, 25 -> ".text"; // scText, scPData (procedure section)
 			case 2 -> ".data";
 			case 3 -> ".bss";
 			case 13 -> ".sdata";
 			case 14 -> ".sbss";
 			case 15 -> ".rodata";
 			case 22 -> ".init";
+			case 24 -> ".xdata"; // scXData: exception handling data
 			case 26 -> ".fini";
+			case 27 -> ".rconst"; // scRConst: read-only constants
 			default -> null; // Register numbers, offsets, undefined/common sizes are not addresses.
 		};
 		if (section == null) {

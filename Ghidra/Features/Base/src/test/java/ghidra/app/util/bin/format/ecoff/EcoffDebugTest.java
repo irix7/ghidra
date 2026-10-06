@@ -32,6 +32,8 @@ public class EcoffDebugTest {
 	public static final int ORIGIN = 0x400;
 	public static final int PD = 96, SYM = 148, AUX = 208, SS = 220, FD = 252, EXTSS = 324,
 							EXT = 336;
+	public static final int PPD = 96, PSYM = 200, PAUX = 332, PSS = 364, PFD = 417,
+							PEXTSS = 489, PEXT = 499;
 
 	/** Five local records and one procedure, deliberately using non-zero file/table bases. */
 	public static byte[] fixture(boolean little, boolean auxBig) {
@@ -81,6 +83,69 @@ public class EcoffDebugTest {
 		b.putInt(field, count).putInt(field + 4, ORIGIN + offset);
 	}
 
+	/**
+	 * Eleven local records: a file record, procedure {@code run} with a register
+	 * parameter (alpha, a0), a stack parameter (beta, frame offset 16) and a register
+	 * local (tmp), its matching stEnd, static data, a typedef, a static procedure
+	 * {@code hidden} with its stEnd and a text label. Also one external record.
+	 */
+	public static byte[] fixtureWithParameters(boolean little, boolean auxBig) {
+		ByteBuffer b = ByteBuffer.allocate(515)
+				.order(little ? ByteOrder.LITTLE_ENDIAN : ByteOrder.BIG_ENDIAN);
+		b.putShort(0, (short)0x7009);
+		b.putShort(2, (short)0x305);
+		table(b, 24, 2, PPD);
+		table(b, 32, 11, PSYM);
+		table(b, 48, 8, PAUX);
+		table(b, 56, 53, PSS);
+		table(b, 64, 10, PEXTSS);
+		table(b, 72, 1, PFD);
+		table(b, 88, 1, PEXT);
+		b.putInt(PPD, 0x1000).putInt(PPD + 4, 1).putInt(PPD + 32, 32);
+		b.putShort(PPD + 36, (short)29).putShort(PPD + 38, (short)31);
+		b.putInt(PPD + 40, 10).putInt(PPD + 44, 20);
+		b.putInt(PPD + 52, 0x1040).putInt(PPD + 56, 8).putInt(PPD + 84, 8);
+		b.putShort(PPD + 88, (short)29).putShort(PPD + 90, (short)31);
+		byte[] strings =
+			"\0\0\0\0a.c\0run\0alpha\0beta\0tmp\0counter\0word\0hidden\0note\0".getBytes(
+				java.nio.charset.StandardCharsets.US_ASCII);
+		b.position(PSS);
+		b.put(strings);
+		b.position(PEXTSS);
+		b.put("\0external\0".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+		sym(b, PSYM, 4, 0, EcoffDebug.ST_FILE, 1, 5, little);
+		sym(b, PSYM + 12, 8, 0x1000, 6, 1, 0, little);
+		sym(b, PSYM + 24, 12, 4, 3, 4, 2, little);
+		sym(b, PSYM + 36, 18, 16, 3, 5, 3, little);
+		sym(b, PSYM + 48, 23, 8, 4, 4, 4, little);
+		sym(b, PSYM + 60, 8, 16, 8, 1, 1, little);
+		sym(b, PSYM + 72, 27, 0x2000, 2, 2, 5, little);
+		sym(b, PSYM + 84, 35, 0, 10, 11, 5, little);
+		sym(b, PSYM + 96, 40, 0x1040, 14, 1, 6, little);
+		sym(b, PSYM + 108, 40, 8, 8, 1, 8, little);
+		sym(b, PSYM + 120, 47, 0x1050, 5, 1, EcoffDebug.INDEX_NIL, little);
+		b.putInt(PFD, 0x1000).putInt(PFD + 4, 4).putInt(PFD + 8, 0).putInt(PFD + 12, 53);
+		b.putInt(PFD + 16, 0).putInt(PFD + 20, 11);
+		b.putShort(PFD + 42, (short)2);
+		b.putInt(PFD + 48, 8);
+		b.put(PFD + 60, (byte)(auxBig ? (little ? 0x80 : 1) : 0));
+		ByteBuffer aux =
+			b.duplicate().order(auxBig ? ByteOrder.BIG_ENDIAN : ByteOrder.LITTLE_ENDIAN);
+		aux.putInt(PAUX, 6); // first local symbol after run's matching stEnd
+		aux.put(PAUX + 4, (byte)(auxBig ? 6 : 6 << 2)); // run returns int
+		aux.put(PAUX + 8, (byte)(auxBig ? 6 : 6 << 2)); // alpha: int
+		aux.put(PAUX + 12, (byte)(auxBig ? 7 : 7 << 2)); // beta: unsigned int *
+		aux.put(PAUX + 14, (byte)(auxBig ? 0x10 : 1));
+		aux.put(PAUX + 16, (byte)(auxBig ? 6 : 6 << 2)); // tmp: int
+		aux.put(PAUX + 20, (byte)(auxBig ? 7 : 7 << 2)); // counter: unsigned int *
+		aux.put(PAUX + 22, (byte)(auxBig ? 0x10 : 1));
+		aux.putInt(PAUX + 24, 10); // first local symbol after hidden's matching stEnd
+		aux.put(PAUX + 28, (byte)(auxBig ? 26 : 26 << 2)); // hidden returns void
+		b.putShort(PEXT + 2, (short)-1);
+		sym(b, PEXT + 4, 1, 0x3000, 1, 3, EcoffDebug.INDEX_NIL, little);
+		return b.array();
+	}
+
 	private static void sym(ByteBuffer b, int pos, int iss, int value, int kind, int storage,
 		int index, boolean little) {
 		b.putInt(pos, iss).putInt(pos + 4, value);
@@ -111,12 +176,101 @@ public class EcoffDebugTest {
 				assertEquals(31, pd.returnRegister());
 				assertEquals(10, pd.lineLow());
 				assertEquals(20, pd.lineHigh());
+				assertTrue(pd.parameters().isEmpty());
+				assertTrue(pd.locals().isEmpty());
 				assertEquals(new EcoffDebug.Type(6, 0), pd.symbol().type());
 				assertEquals(new EcoffDebug.Type(7, 1), f.symbols().get(3).type());
 				assertEquals("counter", f.symbols().get(3).name());
 				assertEquals("external", d.externals().get(0).name());
 				assertEquals(0x3000, d.externals().get(0).value());
 			}
+		}
+	}
+
+	private EcoffDebug parseWithParameters(byte[] bytes, boolean little) throws Exception {
+		return EcoffDebug.parse(new ByteArrayProvider(bytes), ORIGIN, little, TaskMonitor.DUMMY);
+	}
+
+	@Test
+	public void testProcedureParametersLocalsAndStaticSymbols() throws Exception {
+		for (boolean little : new boolean[] {false, true}) {
+			for (boolean auxBig : new boolean[] {false, true}) {
+				EcoffDebug d = parseWithParameters(fixtureWithParameters(little, auxBig), little);
+				var f = d.files().get(0);
+				assertEquals(11, f.symbols().size());
+				assertEquals(2, f.procedures().size());
+				var run = f.procedures().get(0);
+				assertEquals("run", run.symbol().name());
+				assertEquals(16, run.size());
+				assertEquals(32, run.frameSize());
+				assertEquals(2, run.parameters().size());
+				assertEquals(1, run.locals().size());
+				EcoffDebug.Symbol alpha = run.parameters().get(0);
+				assertEquals("alpha", alpha.name());
+				assertEquals(EcoffDebug.ST_PARAM, alpha.kind());
+				assertEquals(EcoffDebug.SC_REGISTER, alpha.storage());
+				assertEquals(4, alpha.value());
+				assertEquals(new EcoffDebug.Type(6, 0), alpha.type());
+				EcoffDebug.Symbol beta = run.parameters().get(1);
+				assertEquals("beta", beta.name());
+				assertEquals(EcoffDebug.SC_ABS, beta.storage());
+				assertEquals(16, beta.value());
+				assertEquals(new EcoffDebug.Type(7, 1), beta.type());
+				EcoffDebug.Symbol tmp = run.locals().get(0);
+				assertEquals("tmp", tmp.name());
+				assertEquals(EcoffDebug.SC_REGISTER, tmp.storage());
+				assertEquals(8, tmp.value());
+				assertEquals(new EcoffDebug.Type(6, 0), tmp.type());
+				var hidden = f.procedures().get(1);
+				assertEquals("hidden", hidden.symbol().name());
+				assertTrue(hidden.symbol().isProcedure());
+				assertEquals(0x1040, hidden.address());
+				assertEquals(8, hidden.size());
+				assertTrue(hidden.parameters().isEmpty());
+				assertTrue(hidden.locals().isEmpty());
+				assertEquals("counter", f.symbols().get(6).name());
+				assertEquals(new EcoffDebug.Type(7, 1), f.symbols().get(6).type());
+				assertEquals("word", f.symbols().get(7).name());
+				assertEquals("note", f.symbols().get(10).name());
+				assertEquals(EcoffDebug.ST_LABEL, f.symbols().get(10).kind());
+				assertEquals("external", d.externals().get(0).name());
+			}
+		}
+	}
+
+	@Test
+	public void testParametersStopAtTheMatchingProcedureEnd() throws Exception {
+		byte[] bytes = fixtureWithParameters(false, true);
+		// Turn alpha into run's stEnd: beta and tmp must not attach to any procedure.
+		sym(ByteBuffer.wrap(bytes), PSYM + 24, 12, 16, 8, 1, 1, false);
+		var f = parseWithParameters(bytes, false).files().get(0);
+		var run = f.procedures().get(0);
+		assertEquals("run", run.symbol().name());
+		assertTrue(run.parameters().isEmpty());
+		assertTrue(run.locals().isEmpty());
+	}
+
+	@Test
+	public void testParametersDoNotCrossIntoFollowingStaticData() throws Exception {
+		byte[] bytes = fixtureWithParameters(false, true);
+		// Remove run's stEnd: the procedure stays open, so everything up to the next
+		// matching end is still associated, but the static data must never become a
+		// parameter of a later procedure.
+		ByteBuffer b = ByteBuffer.wrap(bytes);
+		sym(b, PSYM + 60, 8, 16, 2, 2, 1, false); // replace stEnd with stStatic
+		var f = parseWithParameters(bytes, false).files().get(0);
+		var run = f.procedures().get(0);
+		assertEquals(2, run.parameters().size()); // alpha and beta precede the replacement
+		// hidden still opens after its own record; its parameters remain empty.
+		assertTrue(f.procedures().get(1).parameters().isEmpty());
+	}
+
+	@Test
+	public void testParameterFixtureTruncationAtEveryByte() throws Exception {
+		byte[] b = fixtureWithParameters(false, true);
+		for (int i = 0; i < b.length; i++) {
+			byte[] truncated = Arrays.copyOf(b, i);
+			assertThrows(IOException.class, () -> parseWithParameters(truncated, false));
 		}
 	}
 

@@ -67,4 +67,45 @@ public class EcoffDecompilerTest extends AbstractGhidraHeadlessIntegrationTest {
 			program.release(this);
 		}
 	}
+
+	@Test
+	public void testEcoffParameterNamesAndStoragesReachTheDecompiler() throws Exception {
+		var language = DefaultLanguageService.getLanguageService().getLanguage(
+			new LanguageID("MIPS:BE:32:default"));
+		ProgramDB program = new ProgramDB("ECOFF named parameters", language,
+			language.getDefaultCompilerSpec(), this);
+		int transaction = program.startTransaction("ECOFF named parameters");
+		DecompInterface decompiler = new DecompInterface();
+		try {
+			var entry = program.getAddressFactory().getDefaultAddressSpace().getAddress(0x1000);
+			program.getMemory().createInitializedBlock(".text", entry, 16, (byte) 0,
+				TaskMonitor.DUMMY, false).setExecute(true);
+			// addu v0,a0,a1; jr ra; nop.
+			program.getMemory().setBytes(entry, new byte[] {
+				0, (byte) 0x85, 0x10, 0x21, 3, (byte) 0xe0, 0, 8, 0, 0, 0, 0});
+			EcoffDebug debug = EcoffDebug.parse(new ByteArrayProvider(
+				EcoffDebugTest.fixtureWithParameters(false, true)), EcoffDebugTest.ORIGIN, false,
+				TaskMonitor.DUMMY);
+			new EcoffAnalyzer().importDebug(program, false, debug, TaskMonitor.DUMMY, new MessageLog());
+			var function = program.getFunctionManager().getFunctionAt(entry);
+			assertNotNull(function);
+			assertEquals(2, function.getParameterCount());
+			assertEquals("alpha", function.getParameter(0).getName());
+			assertEquals("beta", function.getParameter(1).getName());
+			assertTrue(decompiler.openProgram(program));
+			DecompileResults results = decompiler.decompileFunction(function, 30, TaskMonitor.DUMMY);
+			assertTrue(results.getErrorMessage(), results.decompileCompleted());
+			var prototype = results.getHighFunction().getFunctionPrototype();
+			assertEquals(results.getDecompiledFunction().getC(), 2, prototype.getNumParams());
+			assertEquals("alpha", prototype.getParam(0).getName());
+			assertEquals("a0", prototype.getParam(0).getStorage().getRegister().getName());
+			assertEquals("beta", prototype.getParam(1).getName());
+			assertTrue(prototype.getParam(1).getStorage().isStackStorage());
+		}
+		finally {
+			decompiler.dispose();
+			program.endTransaction(transaction, false);
+			program.release(this);
+		}
+	}
 }

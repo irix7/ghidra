@@ -2,15 +2,38 @@
 <!-- This cspec describes the MIPS64 ABI called "n32"
      This is the default when using gcc to compile for 64-bit MIPS (i.e. with the -mips64 or -mips64r2 compiler flags)
      This ABI can be requested explicitly in gcc with the -mabi=n32 flag.
-      
+
      n32 specifies 64-bit registers but 32-bit pointers.
      The other major MIPS64 ABI with 32-bit pointers is call "o64"
      The primary parameter passing difference n32 and o64 is that
      n32 can use up to 8 general purpose registers for parameters before going to the stack, while
      o64 can use only up to 4.
-     
+
      See for example "MIPSpro ABI Handbook" SGI part number 007-2816-005
-     -->
+
+     The prototype below models the n32/n64 subprogram interface from that handbook:
+       - The argument registers are an image of the first eight doublewords of a structure
+         holding all the arguments.  Doubleword i is passed in either GPR[i] ($4+i) or
+         FPR[i] ($f12+i) depending on its type, so every argument consumes one slot of
+         BOTH register classes; the <group> tags express this pairing.
+       - Integer parameters of 32 bits or less are sign-extended when passed in registers
+         (hence extension="sign" on the general registers), and smaller scalars are
+         right-justified in their 64-bit slots.
+       - Composite types are treated as a sequence of 64-bit chunks.  A chunk consisting
+         solely of a double float field goes in the floating-point register of its slot
+         (join_dual_class); any other chunk, unions, and array fields go in integer
+         registers.  Structs are always left-justified in partial registers
+         (reversejustify="true").  Chunks beyond the first eight doublewords spill to the
+         stack (stackspill="true").
+       - Floating point parameters in the variable part of the argument list are passed in
+         integer registers (varargs join rules).
+       - Results return in $2 (and $3 if needed) or $f0 (and $f2 if needed).  A struct with
+         only one or two floating point fields is returned in $f0/$f2
+         (homogeneous-float-aggregate); any other composite result of at most 128 bits is
+         returned in $2/$3 left-justified in partial registers; larger composite results
+         become an implicit first parameter pointing at caller-reserved storage, which the
+         model falls back to automatically when neither v0/v1 nor f0/f2 can hold the type.
+  -->
 <compiler_spec>
   <data_organization>
      <absolute_max_alignment value="0" />
@@ -41,7 +64,7 @@
   </global>
   <aggressivetrim signext="true"/>  <!-- Aggressively try to eliminate sign extensions -->
   <!--
-  n32 specifies that ra does not have to be used as the return address register 
+  n32 specifies that ra does not have to be used as the return address register
   <returnaddress>
     <register name="ra"/>
   </returnaddress>
@@ -49,68 +72,148 @@
   <default_proto>
     <prototype name="__stdcall" extrapop="0" stackshift="0">
       <input killedbycall="true">  <!-- assume parameter passing register locations are killedbycall -->
-        <pentry minsize="1" maxsize="8" metatype="float">
-          <register name="f12"/>
-        </pentry>
-        <pentry minsize="1" maxsize="8" metatype="float">
-          <register name="f13"/>
-        </pentry>
-        <pentry minsize="1" maxsize="8" metatype="float">
-          <register name="f14"/>
-        </pentry>
-        <pentry minsize="1" maxsize="8" metatype="float">
-          <register name="f15"/>
-        </pentry>
-        <pentry minsize="1" maxsize="8" metatype="float">
-          <register name="f16"/>
-        </pentry>
-        <pentry minsize="1" maxsize="8" metatype="float">
-          <register name="f17"/>
-        </pentry>
-        <pentry minsize="1" maxsize="8" metatype="float">
-          <register name="f18"/>
-        </pentry>
-        <pentry minsize="1" maxsize="8" metatype="float">
-          <register name="f19"/>
-        </pentry>
-         <pentry minsize="1" maxsize="8" extension="sign">
-          <register name="a0"/>
-        </pentry>
-        <pentry minsize="1" maxsize="8" extension="sign">
-          <register name="a1"/>
-        </pentry>
-        <pentry minsize="1" maxsize="8" extension="sign">
-          <register name="a2"/>
-        </pentry>
-        <pentry minsize="1" maxsize="8" extension="sign">
-          <register name="a3"/>
-        </pentry>
-        <pentry minsize="1" maxsize="8" extension="sign">
-          <register name="t0"/>
-        </pentry>
-        <pentry minsize="1" maxsize="8" extension="sign">
-          <register name="t1"/>
-        </pentry>
-        <pentry minsize="1" maxsize="8" extension="sign">
-          <register name="t2"/>
-        </pentry>
-        <pentry minsize="1" maxsize="8" extension="sign">
-          <register name="t3"/>
-        </pentry>
+        <group>
+          <pentry minsize="1" maxsize="8" metatype="float">
+            <register name="f12"/>
+          </pentry>
+          <pentry minsize="1" maxsize="8" extension="sign">
+            <register name="a0"/>
+          </pentry>
+        </group>
+        <group>
+          <pentry minsize="1" maxsize="8" metatype="float">
+            <register name="f13"/>
+          </pentry>
+          <pentry minsize="1" maxsize="8" extension="sign">
+            <register name="a1"/>
+          </pentry>
+        </group>
+        <group>
+          <pentry minsize="1" maxsize="8" metatype="float">
+            <register name="f14"/>
+          </pentry>
+          <pentry minsize="1" maxsize="8" extension="sign">
+            <register name="a2"/>
+          </pentry>
+        </group>
+        <group>
+          <pentry minsize="1" maxsize="8" metatype="float">
+            <register name="f15"/>
+          </pentry>
+          <pentry minsize="1" maxsize="8" extension="sign">
+            <register name="a3"/>
+          </pentry>
+        </group>
+        <group>
+          <pentry minsize="1" maxsize="8" metatype="float">
+            <register name="f16"/>
+          </pentry>
+          <pentry minsize="1" maxsize="8" extension="sign">
+            <register name="t0"/>
+          </pentry>
+        </group>
+        <group>
+          <pentry minsize="1" maxsize="8" metatype="float">
+            <register name="f17"/>
+          </pentry>
+          <pentry minsize="1" maxsize="8" extension="sign">
+            <register name="t1"/>
+          </pentry>
+        </group>
+        <group>
+          <pentry minsize="1" maxsize="8" metatype="float">
+            <register name="f18"/>
+          </pentry>
+          <pentry minsize="1" maxsize="8" extension="sign">
+            <register name="t2"/>
+          </pentry>
+        </group>
+        <group>
+          <pentry minsize="1" maxsize="8" metatype="float">
+            <register name="f19"/>
+          </pentry>
+          <pentry minsize="1" maxsize="8" extension="sign">
+            <register name="t3"/>
+          </pentry>
+        </group>
         <pentry minsize="1" maxsize="500" align="8">
           <addr offset="0" space="stack"/>
         </pentry>
+        <!-- Floats in the variable part of the argument list are passed in integer registers -->
+        <rule>
+          <datatype name="float"/>
+          <varargs first="0"/>
+          <join reversejustify="true"/>
+        </rule>
+        <!-- Structures in the variable part never use floating point registers -->
+        <rule>
+          <datatype name="struct"/>
+          <varargs first="0"/>
+          <join reversejustify="true"/>
+        </rule>
+        <rule>
+          <datatype name="float"/>
+          <consume storage="float"/>
+        </rule>
+        <rule>
+          <datatype name="float"/>
+          <join reversejustify="true"/>
+        </rule>
+        <!-- Named structs are a sequence of 64-bit chunks: a chunk holding exactly a double
+             field goes in the floating point register of its slot, everything else in the
+             integer register; excess chunks spill to the stack; partial chunks are
+             left-justified -->
+        <rule>
+          <datatype name="struct"/>
+          <join_dual_class stackspill="true" fillalternate="true" reversejustify="true"/>
+        </rule>
+        <rule>
+          <datatype name="union"/>
+          <join reversejustify="true"/>
+        </rule>
+        <rule>
+          <datatype name="any"/>
+          <join/>
+        </rule>
       </input>
       <output>
         <pentry minsize="4" maxsize="8" metatype="float">
           <register name="f0"/>
         </pentry>
-        <pentry minsize="1" maxsize="8" extension="sign">
+        <pentry minsize="4" maxsize="8" metatype="float">
+          <register name="f2"/>
+        </pentry>
+        <pentry minsize="1" maxsize="8">
           <register name="v0"/>
         </pentry>
-        <pentry minsize="9" maxsize="16">
-          <addr space="join" piece1="v0" piece2="v1"/>
+        <pentry minsize="1" maxsize="8">
+          <register name="v1"/>
         </pentry>
+        <!-- Structs with only one or two floating point fields return in f0 (and f2).
+             The two f0/f2 entries above also naturally limit this to aggregates that fit -->
+        <rule>
+          <datatype name="homogeneous-float-aggregate"/>
+          <join_per_primitive storage="float"/>
+        </rule>
+        <rule>
+          <datatype name="float"/>
+          <consume storage="float"/>
+        </rule>
+        <!-- Composite results of at most 128 bits return in v0 (first 64 bits) and v1,
+             left-justified in partial registers.  Larger results fall through to a hidden
+             return pointer (first input parameter) via the standard model fallback. -->
+        <rule>
+          <datatype name="struct"/>
+          <join reversejustify="true"/>
+        </rule>
+        <rule>
+          <datatype name="union"/>
+          <join reversejustify="true"/>
+        </rule>
+        <rule>
+          <datatype name="any"/>
+          <join/>
+        </rule>
       </output>
       <unaffected>
         <register name="s0"/>
@@ -131,9 +234,16 @@
         <register name="f28"/>
         <register name="f30"/>
       </unaffected>
+      <killedbycall>
+        <register name="at"/>
+        <register name="v0"/>
+        <register name="v1"/>
+        <register name="f0"/>
+        <register name="f2"/>
+      </killedbycall>
     </prototype>
   </default_proto>
-  
+
   <callotherfixup targetop="setISAMode">
     <pcode incidentalcopy="true">
       <input name="newMode"/>
@@ -143,5 +253,5 @@
       ]]></body>
     </pcode>
   </callotherfixup>
-  
+
 </compiler_spec>

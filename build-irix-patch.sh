@@ -40,8 +40,11 @@ mkdir -p "$PATCH"
     "$MIPS/src/main/java/ghidra/app/util/bin/format/elf/extend/MIPS_ElfExtension.java" \
     "$MIPS/src/main/java/ghidra/app/plugin/core/analysis/MipsInlineDispatchAnalyzer.java" \
     "$MIPS/src/main/java/ghidra/app/plugin/core/analysis/MipsIndirectTailCallAnalyzer.java" \
-    "$MIPS/src/main/java/ghidra/app/plugin/core/analysis/MipsGpAnalyzer.java"
+    "$MIPS/src/main/java/ghidra/app/plugin/core/analysis/MipsGpAnalyzer.java" \
+    "$MIPS/src/main/java/ghidra/app/plugin/core/analysis/MipsStubsAnalyzer.java" \
+    "$MIPS/src/main/java/ghidra/app/plugin/core/analysis/MipsGotAnalyzer.java"
 cp "$BASE/data/noReturnFunctionConstraints.xml" "$BASE/data/MipsFunctionsThatDoNotReturn" \
     "$DIST/Ghidra/Features/Base/data/"
 cp "$MIPS/data/languages/mips.dwarf" "$DIST/Ghidra/Processors/MIPS/data/languages/"
+cp "$MIPS/data/languages/mips64_32_n32.cspec" "$DIST/Ghidra/Processors/MIPS/data/languages/"
 printf 'IRIX patch compiled into %s\n' "$PATCH"
