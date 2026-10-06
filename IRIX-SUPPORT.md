@@ -29,6 +29,7 @@ ghidra-12.1.2 (tag Ghidra_12.1.2_build)
 | `.mdebug` / ECOFF for objects without DWARF | **Done** | `EcoffDebug.java` + `EcoffAnalyzer.java` (32-bit MIPS ELF `.mdebug`); parameter/local records parsed and parameter names applied; remaining MIPS storage classes mapped for EXEC statics. Validated on unstripped Foundation-era media: `usr/lib/debug/libdmedia.so` 733/764 parameterised, `usr/lib/abi/libc.so` 592/1,310 (C-standard-exact prototypes); upstream #1379 never merged; #356 still open |
 | N32 ABI conventions (struct returns, varargs, paired f/GPR argument slots) | **Done** | `mips64_32_n32.cspec` rewritten to the SGI MIPSpro N32 ABI (007-2816-005), cross-checked against clang 21 `-mabi=n32 -EB` codegen; `N32CallingConventionTest` |
 | Corpus regression harness | **Done** | `work/inventory/` — per-object inventory dumps, baseline + corpus TSV diffing; see AGENTS.md |
+| Native `ld` `.compact_rel` emission (o32) | **Researched** | `docs/irix/native-ld-compact-relocs.md` reverse-engineers the 7.3 linker's record format, sizing, and tags from an oracle link; fix direction is binutils-side. Ghidra-side needs nothing beyond the existing `DT_MIPS_COMPACT_SIZE` constant |
 | IRIX `libc.so.1` loader parse (#1527, `.MIPS.options`) | **Untested** | our fixtures parse; libc.so.1 should be added to the smoke matrix |
 
 ## Harvest list (unmerged upstream work worth porting)
