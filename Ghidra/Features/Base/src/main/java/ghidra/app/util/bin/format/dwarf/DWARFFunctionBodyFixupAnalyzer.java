@@ -94,14 +94,19 @@ class DWARFFunctionBodyFixupAnalyzer extends AbstractAnalyzer {
 			return;
 		}
 
-		// Demote functions that are not DWARF subprograms but start inside a DWARF function
+		// Demote functions that are not DWARF subprograms but start inside a DWARF function.
+		// Thunks (eg. shared-return eret jumps to a common epilogue) are also demoted when
+		// strictly inside an authoritative DWARF range: the DWARF range describes the whole
+		// hand-written assembly function, and the demoted name remains as a label so branch
+		// targets and address-taken references still resolve.  Thunks outside DWARF ranges
+		// keep their existing behaviour.
 		List<Function> toDemote = new ArrayList<>();
 		FunctionIterator fit = functionMgr.getFunctions(dwarfFuncBodies, true);
 		while (fit.hasNext()) {
 			Function f = fit.next();
 			Address entry = f.getEntryPoint();
 			if (dwarfFuncBodies.contains(entry) && !dwarfEntries.contains(entry) &&
-				!f.isExternal() && !f.isThunk()) {
+				!f.isExternal() && (!f.isThunk() || isStrictlyInsideDwarfRange(entry, funcBodies))) {
 				toDemote.add(f);
 			}
 		}
@@ -111,7 +116,17 @@ class DWARFFunctionBodyFixupAnalyzer extends AbstractAnalyzer {
 			Namespace ns = f.getParentNamespace();
 			if (functionMgr.removeFunction(entry)) {
 				try {
-					if (symbolTable.getPrimarySymbol(entry) == null) {
+					// Keep the demoted name as a label so intra-function branches and
+					// address-taken references still resolve.  An existing primary
+					// (eg. DWARF label) is left in place.
+					boolean hasName = false;
+					for (Symbol s : symbolTable.getSymbols(entry)) {
+						if (name.equals(s.getName())) {
+							hasName = true;
+							break;
+						}
+					}
+					if (!hasName) {
 						symbolTable.createLabel(entry, name, ns, SourceType.IMPORTED);
 					}
 				}
@@ -136,6 +151,24 @@ class DWARFFunctionBodyFixupAnalyzer extends AbstractAnalyzer {
 						.formatted(info.name(), info.entry()));
 			}
 		}
+	}
+
+	/**
+	 * Returns true if the address lies strictly inside a DWARF subprogram body, ie. it is
+	 * contained in a DWARF range but is not itself a DWARF subprogram entry point.
+	 *
+	 * @param entry address to test
+	 * @param funcBodies DWARF subprogram entry points and body ranges
+	 * @return true if strictly inside a DWARF range
+	 */
+	private static boolean isStrictlyInsideDwarfRange(Address entry,
+			List<FunctionBodyInfo> funcBodies) {
+		for (FunctionBodyInfo info : funcBodies) {
+			if (!entry.equals(info.entry()) && info.body().contains(entry)) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	private static boolean setFunctionBody(FunctionManager functionMgr, FunctionBodyInfo info,

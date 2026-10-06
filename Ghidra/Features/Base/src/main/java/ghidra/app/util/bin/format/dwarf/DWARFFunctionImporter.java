@@ -262,7 +262,8 @@ public class DWARFFunctionImporter {
 			}
 		}
 
-		if (importOptions.isCreateFuncSignatures()) {
+		if (importOptions.isCreateFuncSignatures() &&
+			dfunc.signatureCommitMode != CommitMode.NO_PARAMS) {
 			DataType funcDefDT = dfunc.asFunctionDefinition(false);
 			funcDefDT = prog.getGhidraProgram()
 					.getDataTypeManager()
