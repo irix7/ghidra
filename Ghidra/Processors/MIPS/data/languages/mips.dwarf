@@ -18,4 +18,18 @@
 		<register_mapping dwarf="32" ghidra="f0" auto_count="32"/> <!-- f0..f31 -->
 	</register_mappings>
 	<call_frame_cfa value="0"/>
+	<!--
+		Static value for the stack pointer (sp, dwarf reg 29).  MIPSpro emits
+		sp-relative location expressions (DW_OP_breg29) for locals and parameters;
+		using 0 makes them convert to Ghidra stack storage relative to sp at entry.
+	 -->
+	<static_stack_pointer value="0"/>
+	<!--
+		stack_frame allows dwarf expressions that reference s8 (fp, dwarf reg 30) to be
+		converted to a ghidra stack location without evaluating the actual fp value via
+		symbolic propagation.  MIPSpro sets fp = sp in the prologue, so a static offset
+		of 0 relative to sp is the right approximation.  Without this, SGI's DW_OP_reg30
+		frame-base idiom is reported as an un-recoverable expression.
+	 -->
+	<stack_frame register="s8" offset="0"/>
 </dwarf>

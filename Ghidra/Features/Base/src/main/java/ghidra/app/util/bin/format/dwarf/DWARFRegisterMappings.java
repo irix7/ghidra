@@ -74,7 +74,7 @@ import ghidra.program.model.lang.Register;
 public class DWARFRegisterMappings {
 
 	public static final DWARFRegisterMappings DUMMY =
-		new DWARFRegisterMappings(Map.of(), null, -1, null, 0, false);
+		new DWARFRegisterMappings(Map.of(), null, -1, null, 0, false, null);
 
 	/*
 	 * Maps DWARF register number to Ghidra architecture registers.
@@ -91,15 +91,18 @@ public class DWARFRegisterMappings {
 
 	private int stackFrameRegisterOffset;
 
+	private final Integer staticStackPointerOffset;
+
 	public DWARFRegisterMappings(Map<Integer, Register> regmap, Integer callFrameCFA,
 			int stackPointerIndex, Register stackFrameRegister, int stackFrameRegisterOffset,
-			boolean useFPS) {
+			boolean useFPS, Integer staticStackPointerOffset) {
 		this.dwarfRegisterMap = regmap;
 		this.callFrameCFA = callFrameCFA;
 		this.stackPointerIndex = stackPointerIndex;
 		this.stackFrameRegister = stackFrameRegister;
 		this.useFormalParameterStorage = useFPS;
 		this.stackFrameRegisterOffset = stackFrameRegisterOffset;
+		this.staticStackPointerOffset = staticStackPointerOffset;
 	}
 
 	public Register getGhidraReg(int dwarfRegNum) {
@@ -134,6 +137,17 @@ public class DWARFRegisterMappings {
 
 	public int getStackFrameRegisterOffset() {
 		return stackFrameRegisterOffset;
+	}
+
+	/**
+	 * 'Static' value for the stack pointer register, used when evaluating
+	 * stack-pointer-relative DWARF expressions (eg. {@code DW_OP_breg<sp>}) without
+	 * symbolic execution.  Null if the architecture has not declared one.
+	 *
+	 * @return static stack pointer offset, or null
+	 */
+	public Integer getStaticStackPointerOffset() {
+		return staticStackPointerOffset;
 	}
 
 	public boolean isUseFormalParameterStorage() {

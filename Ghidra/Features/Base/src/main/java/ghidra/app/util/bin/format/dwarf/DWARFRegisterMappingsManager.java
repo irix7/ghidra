@@ -136,6 +136,7 @@ public class DWARFRegisterMappingsManager {
 		Integer cfa = null; // null == not set
 		Register stackFrameRegister = null;
 		int stackFrameRegisterOffset = 0;
+		Integer staticStackPointerOffset = null; // null == not set
 		boolean useFPS;
 		try {
 			spi = readMappingsElem(regMappingsElem, lang, regmap);
@@ -143,6 +144,12 @@ public class DWARFRegisterMappingsManager {
 			if (callFrameElem != null) {
 				cfa = XmlUtilities.parseOptionalBoundedIntAttr(callFrameElem, "value", 0, 0,
 					Integer.MAX_VALUE);
+			}
+
+			Element staticStackPointerElem = rootElem.getChild("static_stack_pointer");
+			if (staticStackPointerElem != null) {
+				staticStackPointerOffset = XmlUtilities.parseBoundedIntAttr(staticStackPointerElem,
+					"value", Integer.MIN_VALUE, Integer.MAX_VALUE);
 			}
 
 			Element stackFrameElem = rootElem.getChild("stack_frame");
@@ -169,7 +176,7 @@ public class DWARFRegisterMappingsManager {
 		}
 
 		return new DWARFRegisterMappings(regmap, cfa, spi, stackFrameRegister,
-			stackFrameRegisterOffset, useFPS);
+			stackFrameRegisterOffset, useFPS, staticStackPointerOffset);
 	}
 
 	/*

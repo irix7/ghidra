@@ -31,6 +31,10 @@ mkdir -p "$PATCH"
     "$BASE/src/main/java/ghidra/app/util/bin/format/dwarf/DWARFFunction.java" \
     "$BASE/src/main/java/ghidra/app/util/bin/format/dwarf/DWARFFunctionImporter.java" \
     "$BASE/src/main/java/ghidra/app/util/bin/format/dwarf/DWARFFunctionBodyFixupAnalyzer.java" \
+    "$BASE/src/main/java/ghidra/app/util/bin/format/dwarf/DWARFVariable.java" \
+    "$BASE/src/main/java/ghidra/app/util/bin/format/dwarf/DWARFRegisterMappings.java" \
+    "$BASE/src/main/java/ghidra/app/util/bin/format/dwarf/DWARFRegisterMappingsManager.java" \
+    "$BASE/src/main/java/ghidra/app/util/bin/format/dwarf/expression/DWARFExpressionEvaluator.java" \
     "$BASE/src/main/java/ghidra/app/util/bin/format/ecoff/EcoffDebug.java" \
     "$BASE/src/main/java/ghidra/app/plugin/core/analysis/EcoffAnalyzer.java" \
     "$MIPS/src/main/java/ghidra/app/util/bin/format/elf/extend/MIPS_ElfExtension.java" \
@@ -39,4 +43,5 @@ mkdir -p "$PATCH"
     "$MIPS/src/main/java/ghidra/app/plugin/core/analysis/MipsGpAnalyzer.java"
 cp "$BASE/data/noReturnFunctionConstraints.xml" "$BASE/data/MipsFunctionsThatDoNotReturn" \
     "$DIST/Ghidra/Features/Base/data/"
+cp "$MIPS/data/languages/mips.dwarf" "$DIST/Ghidra/Processors/MIPS/data/languages/"
 printf 'IRIX patch compiled into %s\n' "$PATCH"
