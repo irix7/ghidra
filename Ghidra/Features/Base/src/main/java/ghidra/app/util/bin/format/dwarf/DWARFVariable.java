@@ -374,7 +374,8 @@ public class DWARFVariable {
 			}
 
 			if (prog.getImportOptions().isUseStaticStackFrameRegisterValue()) {
-				exprEvaluator.setValReader(exprEvaluator.withStaticStackRegisterValues(null,
+				exprEvaluator.setValReader(exprEvaluator.withStaticStackRegisterValues(
+					prog.getRegisterMappings().getStaticStackPointerOffset(),
 					prog.getRegisterMappings().getStackFrameRegisterOffset()));
 			}
 

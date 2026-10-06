@@ -349,6 +349,19 @@ public class DWARFExpressionEvaluator {
 		return reg;
 	}
 
+	/**
+	 * Returns true if the register is the processor's architectural zero register
+	 * (MIPS {@code r0}).  Its value is always 0, so expressions such as
+	 * {@code DW_OP_breg0 <off>} denote absolute addresses.
+	 *
+	 * @param reg register to test
+	 * @return true if the register holds a constant value of zero
+	 */
+	private boolean isZeroRegister(Register reg) {
+		Register zero = lang.getRegister("zero");
+		return zero != null && zero.equals(reg);
+	}
+
 	private void evaluateInstruction(DWARFExpressionInstruction _instr)
 			throws DWARFExpressionException {
 		this.instr = _instr;
@@ -359,22 +372,33 @@ public class DWARFExpressionEvaluator {
 			// Retrieve address held in register X and add offset from operand0 and push result on stack.
 			Register register = getReg(instr.opcode.getRelativeOpCodeOffset(DW_OP_breg0));
 			long offset = instr.getOperandValue(0);
-			Object regVal = valReader.getValue(newRegisterVarnode(register));
-			if (regVal instanceof Varnode regVN &&
-				(DWARFUtil.isStackVarnode(regVN) || regVN.isConstant())) {
-				push(new Varnode(regVN.getAddress().add(offset), 0));
-			}
-			else if (regVal instanceof Scalar s) {
-				push(s.getValue() + offset);
+			if (isZeroRegister(register)) {
+				// MIPS r0 is always zero; breg0 encodes an absolute address (SGI frame-base idiom).
+				push(offset);
 			}
 			else {
-				throw new DWARFExpressionException("Unable to deref register value " + regVal);
+				Object regVal = valReader.getValue(newRegisterVarnode(register));
+				if (regVal instanceof Varnode regVN &&
+					(DWARFUtil.isStackVarnode(regVN) || regVN.isConstant())) {
+					push(new Varnode(regVN.getAddress().add(offset), 0));
+				}
+				else if (regVal instanceof Scalar s) {
+					push(s.getValue() + offset);
+				}
+				else {
+					throw new DWARFExpressionException("Unable to deref register value " + regVal);
+				}
 			}
 		}
 		else if (DWARFExpressionOpCode.isInRange(instr.opcode, DW_OP_reg0, DW_OP_reg31)) {
 			Register register = getReg(instr.opcode.getRelativeOpCodeOffset(DW_OP_reg0));
-			Object regVal = valReader.getValue(newRegisterVarnode(register));
-			push(regVal);
+			if (isZeroRegister(register)) {
+				push(0L);
+			}
+			else {
+				Object regVal = valReader.getValue(newRegisterVarnode(register));
+				push(regVal);
+			}
 		}
 		else {
 			switch (instr.opcode) {
