@@ -33,6 +33,8 @@ import ghidra.program.model.address.*;
 import ghidra.program.model.data.*;
 import ghidra.program.model.lang.LanguageID;
 import ghidra.program.model.listing.Function;
+import ghidra.program.model.listing.Parameter;
+import ghidra.program.model.listing.ParameterImpl;
 import ghidra.program.model.symbol.SourceType;
 import ghidra.program.util.DefaultLanguageService;
 import ghidra.test.AbstractGhidraHeadlessIntegrationTest;
@@ -77,6 +79,16 @@ public class EcoffAnalyzerIntegrationTest extends AbstractGhidraHeadlessIntegrat
 		new EcoffAnalyzer().importDebug(program, false, debug, TaskMonitor.DUMMY, new MessageLog());
 	}
 
+	private void importBytesWithParameters(byte[] bytes) throws Exception {
+		EcoffDebug debug = EcoffDebug.parse(
+			new ByteArrayProvider(bytes), EcoffDebugTest.ORIGIN, false, TaskMonitor.DUMMY);
+		MessageLog log = new MessageLog();
+		new EcoffAnalyzer().importDebug(program, false, debug, TaskMonitor.DUMMY, log);
+		importLog = log.toString();
+	}
+
+	private String importLog;
+
 	private List<EcoffAnalyzer.EcoffFunctionBodyFixupAnalyzer.FunctionBodyInfo> importBodies(
 		byte[] bytes) throws Exception {
 		EcoffDebug debug = EcoffDebug.parse(
@@ -100,6 +112,85 @@ public class EcoffAnalyzerIntegrationTest extends AbstractGhidraHeadlessIntegrat
 		assertTrue(program.getListing().getDataAt(addr(0x2000)).getDataType() instanceof Pointer);
 		assertTrue(program.getDataTypeManager().getDataType(new CategoryPath("/ECOFF"), "word")
 					   instanceof TypeDef);
+	}
+
+	@Test
+	public void testProcedureParametersAndLocalsAreImported() throws Exception {
+		importBytesWithParameters(EcoffDebugTest.fixtureWithParameters(false, true));
+		Function function = program.getFunctionManager().getFunctionAt(addr(0x1000));
+		assertNotNull(function);
+		assertEquals("run", function.getName());
+		assertEquals(SourceType.IMPORTED, function.getSignatureSource());
+		Parameter[] params = function.getParameters();
+		assertEquals(2, params.length);
+		assertEquals("alpha", params[0].getName());
+		assertEquals(SourceType.IMPORTED, params[0].getSource());
+		assertTrue(params[0].getVariableStorage().isRegisterStorage());
+		assertEquals("a0", params[0].getVariableStorage().getRegister().getName());
+		assertEquals("int", params[0].getDataType().getName());
+		assertEquals("beta", params[1].getName());
+		assertTrue(params[1].getVariableStorage().isStackStorage());
+		assertEquals(16, params[1].getVariableStorage().getStackOffset());
+		assertTrue(params[1].getDataType() instanceof Pointer);
+		Function hidden = program.getFunctionManager().getFunctionAt(addr(0x1040));
+		assertNotNull(hidden);
+		assertEquals("hidden", hidden.getName());
+		assertEquals(0, hidden.getParameterCount());
+		assertEquals(SourceType.DEFAULT, hidden.getSignatureSource());
+		assertTrue(importLog.contains("2 parameter(s) imported"));
+	}
+
+	@Test
+	public void testParameterImportNeverOverwritesUserDefinedSignature() throws Exception {
+		Function function = program.getFunctionManager().createFunction("run", addr(0x1000),
+			new AddressSet(addr(0x1000), addr(0x100f)), SourceType.USER_DEFINED);
+		function.setReturnType(DoubleDataType.dataType, SourceType.USER_DEFINED);
+		importBytesWithParameters(EcoffDebugTest.fixtureWithParameters(false, true));
+		assertEquals(0, function.getParameterCount());
+		assertEquals("double", function.getReturnType().getName());
+		assertEquals(SourceType.USER_DEFINED, function.getSignatureSource());
+	}
+
+	@Test
+	public void testParameterImportNeverOverwritesUserDefinedParameters() throws Exception {
+		Function function = program.getFunctionManager().createFunction("run", addr(0x1000),
+			new AddressSet(addr(0x1000), addr(0x100f)), SourceType.IMPORTED);
+		Parameter user = new ParameterImpl("mine", Undefined4DataType.dataType, 4, program,
+			SourceType.USER_DEFINED);
+		function.replaceParameters(Function.FunctionUpdateType.CUSTOM_STORAGE, false,
+			SourceType.USER_DEFINED, user);
+		importBytesWithParameters(EcoffDebugTest.fixtureWithParameters(false, true));
+		Parameter[] params = function.getParameters();
+		assertEquals(1, params.length);
+		assertEquals("mine", params[0].getName());
+		assertEquals(SourceType.USER_DEFINED, params[0].getSource());
+	}
+
+	@Test
+	public void testDuplicateParameterNamesAbandonTheWholeImport() throws Exception {
+		byte[] bytes = EcoffDebugTest.fixtureWithParameters(false, true);
+		// Rename beta to alpha: the parameter list is rejected, so nothing is applied.
+		System.arraycopy("alpha\0".getBytes(java.nio.charset.StandardCharsets.US_ASCII), 0,
+			bytes, EcoffDebugTest.PSS + 18, 6);
+		importBytesWithParameters(bytes);
+		Function function = program.getFunctionManager().getFunctionAt(addr(0x1000));
+		assertNotNull(function);
+		assertEquals(0, function.getParameterCount());
+		assertEquals(SourceType.DEFAULT, function.getSignatureSource());
+		assertTrue(importLog.contains("ECOFF parameters run"));
+	}
+
+	@Test
+	public void testExecAbsoluteStaticsLabelsAndStaticProceduresAreNamed() throws Exception {
+		importBytesWithParameters(EcoffDebugTest.fixtureWithParameters(false, true));
+		assertNotNull(program.getSymbolTable().getGlobalSymbol("note", addr(0x1050)));
+		assertNotNull(program.getSymbolTable().getGlobalSymbol("counter", addr(0x2000)));
+		assertTrue(program.getListing().getDataAt(addr(0x2000)).getDataType() instanceof Pointer);
+		assertNotNull(program.getSymbolTable().getGlobalSymbol("external", addr(0x3000)));
+		// The static procedure becomes a function, not merely a label.
+		Function hidden = program.getFunctionManager().getFunctionAt(addr(0x1040));
+		assertNotNull(hidden);
+		assertEquals(SourceType.IMPORTED, hidden.getSymbol().getSource());
 	}
 
 	@Test

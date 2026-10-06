@@ -33,17 +33,36 @@ import ghidra.util.task.TaskMonitor;
  * astrelsky/ghidra_mdebug (EcoffHdrr/Fdr/Pdr) and chaoticgd/ccc (mdebug_section.cpp,
  * mdebug_importer.cpp), both on github.com. No implementation code is copied.
  * Procedure end and auxiliary semantics were also checked against GDB's mdebugread.c
- * on the binutils-2_40-branch.
+ * on the binutils-2_40-branch and the SGI Mdebug documentation (David Anderson's
+ * Mdebug.ps): stParam/stLocal records are attached to their enclosing text procedure
+ * and their values are register numbers (scRegister/scVarRegister) or frame offsets
+ * from the virtual frame pointer (any other storage class).
  * Unlike CCC, moved sections with stale offsets are not heuristically repaired.
  */
 public final class EcoffDebug {
 	public static final int HEADER_SIZE = 96;
 	public static final int INDEX_NIL = 0xfffff;
+	public static final int ST_NIL = 0;
+	public static final int ST_GLOBAL = 1;
+	public static final int ST_STATIC = 2;
+	public static final int ST_PARAM = 3;
+	public static final int ST_LOCAL = 4;
 	public static final int ST_LABEL = 5;
 	public static final int ST_PROC = 6;
+	public static final int ST_BLOCK = 7;
 	public static final int ST_END = 8;
+	public static final int ST_MEMBER = 9;
+	public static final int ST_TYPEDEF = 10;
+	public static final int ST_FILE = 11;
 	public static final int ST_STATIC_PROC = 14;
+	public static final int ST_CONSTANT = 15;
 	public static final int SC_TEXT = 1;
+	public static final int SC_DATA = 2;
+	public static final int SC_BSS = 3;
+	public static final int SC_REGISTER = 4;
+	public static final int SC_ABS = 5;
+	public static final int SC_VAR = 16;
+	public static final int SC_VAR_REGISTER = 19;
 	private static final int MAX_RECORDS = 2_000_000;
 	private static final int MAX_STRING = 65536;
 	private static final long MAX_DECODED_STRING_BYTES = 64 * 1024 * 1024;
@@ -60,7 +79,8 @@ public final class EcoffDebug {
 		}
 	}
 	public record Procedure(long address, Symbol symbol, long size, int frameSize,
-		int frameRegister, int returnRegister, int lineLow, int lineHigh) {}
+		int frameRegister, int returnRegister, int lineLow, int lineHigh,
+		List<Symbol> parameters, List<Symbol> locals) {}
 	public record FileDescriptor(String name, long address, int language, boolean auxBigEndian,
 		List<Symbol> symbols, List<Procedure> procedures) {}
 
@@ -275,6 +295,34 @@ public final class EcoffDebug {
 				ownedSymbols.set(global);
 				symbols.add(symbol(at(3, global), 6, ss, cbSs, auxBase, auxCount, auxBig, false));
 			}
+			// stParam and stLocal records belong to the open text procedure: the last
+			// stProc/stStaticProc before a matching stEnd (whose index references the
+			// procedure's local record, per the SGI mdebug specification). Nested blocks
+			// do not detach them, since only a matching procedure stEnd closes a procedure.
+			Map<Integer, List<Symbol>> parametersByProc = new HashMap<>();
+			Map<Integer, List<Symbol>> localsByProc = new HashMap<>();
+			Deque<Integer> openProcedures = new ArrayDeque<>();
+			for (int j = 0; j < symbols.size(); j++) {
+				monitor.checkCanceled();
+				Symbol s = symbols.get(j);
+				if (s.isProcedure() && s.storage() == SC_TEXT && !s.isStab()) {
+					openProcedures.push(j);
+					parametersByProc.put(j, new ArrayList<>());
+					localsByProc.put(j, new ArrayList<>());
+				}
+				else if (s.kind() == ST_END && !openProcedures.isEmpty() &&
+					s.index() == openProcedures.peek()) {
+					openProcedures.pop();
+				}
+				else if (!openProcedures.isEmpty()) {
+					if (s.kind() == ST_PARAM) {
+						parametersByProc.get(openProcedures.peek()).add(s);
+					}
+					else if (s.kind() == ST_LOCAL) {
+						localsByProc.get(openProcedures.peek()).add(s);
+					}
+				}
+			}
 			List<Procedure> procedures = new ArrayList<>();
 			for (int j = 0; j < pdCount; j++) {
 				monitor.checkCanceled();
@@ -314,7 +362,9 @@ public final class EcoffDebug {
 				procedures.add(
 					new Procedure(reader.readUnsignedInt(pd), sym, size, reader.readInt(pd + 32),
 						reader.readUnsignedShort(pd + 36), reader.readUnsignedShort(pd + 38),
-						reader.readInt(pd + 40), reader.readInt(pd + 44)));
+						reader.readInt(pd + 40), reader.readInt(pd + 44),
+						List.copyOf(parametersByProc.getOrDefault(isym, List.of())),
+						List.copyOf(localsByProc.getOrDefault(isym, List.of()))));
 			}
 			files.add(new FileDescriptor(name, reader.readUnsignedInt(fd), language, auxBig,
 				List.copyOf(symbols), List.copyOf(procedures)));
