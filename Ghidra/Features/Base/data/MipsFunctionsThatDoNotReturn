@@ -1,0 +1,5 @@
+# IRIX kernel functions for big-endian MIPS ELF (panic is already in the ELF list).
+# Names must omit leading underscores; the known no-return analyser strips them.
+sppanic
+# R4600 cache workaround trampoline ends in eret, not a return to its caller.
+r4600_2_0_cacheop_eret

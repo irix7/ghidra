@@ -72,6 +72,12 @@ public class DWARFImportOptions {
 	private static final String OPTION_IMPORT_LOCAL_VARS_DESC =
 		"Import local variable information from DWARF and attempt to create Ghidra local variables.";
 
+	private static final String OPTION_SET_FUNC_BODIES = "Set Function Bodies From DWARF";
+	private static final String OPTION_SET_FUNC_BODIES_DESC =
+		"Set function bodies from the PC ranges found in the DWARF data, and demote any " +
+			"function entries that fall inside a DWARF function range but are not themselves " +
+			"declared in the DWARF data (eg. assembler labels exported as function symbols).";
+
 	private static final String OPTION_IGNORE_PARAM_STORAGE = "Ignore Parameter Storage Info";
 	private static final String OPTION_IGNORE_PARAM_STORAGE_DESC =
 		"Ignore any function parameter storage info specifed, allow automatic layout.";
@@ -132,6 +138,7 @@ public class DWARFImportOptions {
 	private boolean tryPackStructs = true;
 	private boolean specialCaseSizedBaseTypes = true;
 	private boolean importLocalVariables = true;
+	private boolean setFunctionBodies = true;
 	private boolean useBookmarks = true;
 	private boolean outputSourceLineInfo = true;
 	private boolean ignoreParamStorage = false;
@@ -417,6 +424,24 @@ public class DWARFImportOptions {
 		this.importLocalVariables = importLocalVariables;
 	}
 
+	/**
+	 * Option to set function bodies from DWARF PC ranges.
+	 *
+	 * @return boolean true if function bodies should be set from DWARF range info
+	 */
+	public boolean isSetFunctionBodies() {
+		return setFunctionBodies;
+	}
+
+	/**
+	 * Option to set function bodies from DWARF PC ranges.
+	 *
+	 * @param setFunctionBodies boolean flag to set
+	 */
+	public void setSetFunctionBodies(boolean setFunctionBodies) {
+		this.setFunctionBodies = setFunctionBodies;
+	}
+
 	public boolean isUseBookmarks() {
 		return useBookmarks;
 	}
@@ -562,6 +587,9 @@ public class DWARFImportOptions {
 		options.registerOption(OPTION_IMPORT_LOCAL_VARS, isImportLocalVariables(), null,
 			OPTION_IMPORT_LOCAL_VARS_DESC);
 
+		options.registerOption(OPTION_SET_FUNC_BODIES, isSetFunctionBodies(), null,
+			OPTION_SET_FUNC_BODIES_DESC);
+
 		options.registerOption(OPTION_SOURCE_LINEINFO, isOutputSourceLineInfo(), null,
 			OPTION_SOURCE_LINEINFO_DESC);
 
@@ -605,6 +633,8 @@ public class DWARFImportOptions {
 		setTryPackDataTypes(options.getBoolean(OPTION_TRY_PACK_STRUCTS, isTryPackStructs()));
 		setImportLocalVariables(
 			options.getBoolean(OPTION_IMPORT_LOCAL_VARS, isImportLocalVariables()));
+		setSetFunctionBodies(
+			options.getBoolean(OPTION_SET_FUNC_BODIES, isSetFunctionBodies()));
 		setOutputSourceLineInfo(
 			options.getBoolean(OPTION_SOURCE_LINEINFO, isOutputSourceLineInfo()));
 		setIgnoreParamStorage(
