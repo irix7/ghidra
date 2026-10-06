@@ -15,6 +15,10 @@ if [[ ! -f "$DIST/Ghidra/application.properties" ]] ||
     exit 2
 fi
 JAVAC=${JAVA_HOME:+$JAVA_HOME/bin/}javac
+if ! command -v "$JAVAC" >/dev/null; then
+    # Fall back to the pinned Nix JDK when javac is not on PATH.
+    JAVAC=/nix/store/p3ckxs1gmqir4m2b6yknbbka33da1y4m-openjdk-21.0.12.1+1/bin/javac
+fi
 JARS=("$DIST"/**/*.jar)
 CP=$(IFS=:; printf '%s' "${JARS[*]}")
 BASE="$REPO/Ghidra/Features/Base"
