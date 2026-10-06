@@ -1,4 +1,9 @@
 <noReturnFunctionConstraints>
+	<language id="MIPS:BE:*:*">
+		<executable_format name="Executable and Linking Format (ELF)">
+			<functionNamesFile>MipsFunctionsThatDoNotReturn</functionNamesFile>
+		</executable_format>
+	</language>
 	<executable_format name="Executable and Linking Format (ELF)">
 		<compiler id="golang">
 			<functionNamesFile>GolangFunctionsThatDoNotReturn</functionNamesFile>

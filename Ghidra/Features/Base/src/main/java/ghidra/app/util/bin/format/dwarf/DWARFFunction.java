@@ -128,6 +128,18 @@ public class DWARFFunction {
 		}
 		dfunc.varArg = !diea.getChildren(DW_TAG_unspecified_parameters).isEmpty();
 
+		DIEAggregate returnType = diea.getTypeRef();
+		int cuLanguage = diea.getCompilationUnit().getLanguage();
+		boolean assemblyUnit = cuLanguage == DWARFSourceLanguage.DW_LANG_Mips_Assembler ||
+			cuLanguage == DWARFSourceLanguage.DW_LANG_SUN_Assembler ||
+			cuLanguage == DWARFSourceLanguage.DW_LANG_ALTIUM_Assembler;
+		if (dfunc.params.isEmpty() && !dfunc.varArg && !diea.getBool(DW_AT_prototyped, false) &&
+			((returnType != null && returnType.getTag() == DW_TAG_unspecified_type) ||
+				(returnType == null && assemblyUnit))) {
+			// Assembler DIEs describe names and ranges, not an authoritative void(void) signature.
+			dfunc.signatureCommitMode = CommitMode.NO_PARAMS;
+		}
+
 		return dfunc;
 	}
 
@@ -440,6 +452,9 @@ public class DWARFFunction {
 	}
 
 	public void runFixups() {
+		if (signatureCommitMode == CommitMode.NO_PARAMS) {
+			return;
+		}
 		// Run all the DWARFFunctionFixup instances
 		for (DWARFFunctionFixup fixup : getProgram().getFunctionFixups()) {
 			try {
