@@ -265,6 +265,30 @@ public class EcoffAnalyzerIntegrationTest extends AbstractGhidraHeadlessIntegrat
 	}
 
 	@Test
+	public void testLateBodyFixupDemotesNestedNonEcoffEntry() throws Exception {
+		// A non-ECOFF (imported) function stub inside the authoritative procedure clips the
+		// parent body during import (so it is recorded as the full authored range), and the
+		// late fixup demotes the nested entry to a label so the parent keeps its whole body.
+		program.getFunctionManager().createFunction("stub", addr(0x1008),
+			new AddressSet(addr(0x1008)), SourceType.IMPORTED);
+		List<EcoffAnalyzer.EcoffFunctionBodyFixupAnalyzer.FunctionBodyInfo> authored =
+			importBodies(EcoffDebugTest.fixture(false, true));
+		Function function = program.getFunctionManager().getFunctionAt(addr(0x1000));
+		assertNotNull(function);
+		AddressSet expected = new AddressSet(addr(0x1000), addr(0x100f));
+		assertEquals(1, authored.size());
+		assertEquals(expected, authored.get(0).body());
+		// The import subtracted the nested stub from the live body.
+		assertFalse(function.getBody().contains(addr(0x1008)));
+		List<String> warnings = new ArrayList<>();
+		EcoffAnalyzer.EcoffFunctionBodyFixupAnalyzer.apply(program, authored, warnings::add);
+		assertTrue(warnings.isEmpty());
+		assertEquals(expected, function.getBody());
+		assertNull(program.getFunctionManager().getFunctionAt(addr(0x1008)));
+		assertNotNull(program.getSymbolTable().getGlobalSymbol("stub", addr(0x1008)));
+	}
+
+	@Test
 	public void testLateBodyFixupSkipsUserOwnedAndMissingFunctions() throws Exception {
 		List<EcoffAnalyzer.EcoffFunctionBodyFixupAnalyzer.FunctionBodyInfo> authored =
 			importBodies(EcoffDebugTest.fixture(false, true));
