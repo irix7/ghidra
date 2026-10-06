@@ -24,7 +24,11 @@ ghidra-12.1.2 (tag Ghidra_12.1.2_build)
 | Non-returning IRIX asm (`panic`, `sppanic`, `_r4600_2_0_cacheop_eret`) | **Done** | `MipsFunctionsThatDoNotReturn` + `noReturnFunctionConstraints.xml`; ECOFF import re-runs the known no-return pass on its own entries |
 | DWARF asm signature locking (`void f(void)` committed as definite for asm subprograms) | **Done** | `NO_PARAMS` commit mode leaves unknown signatures recoverable; upstream #9476 |
 | `.mdebug` / ECOFF for objects without DWARF | **Done** | `EcoffDebug.java` + `EcoffAnalyzer.java` (32-bit MIPS ELF `.mdebug`); late body fixup re-applies ranges; upstream #1379 never merged; #356 still open |
-| GP-relative (CPIC) model: `gp`/`t9` seeded at function entries so gp-relative GOT and small-data references resolve | **Partly done** | `MipsGpAnalyzer` seeds `gp` = `_mips_gp_value` and `t9` = function entry (PIC ABI); measured on libGLcore: `unaff_gp` 7→0, `(**(code **)` call spam 78→42 in a 123-function sample. Remaining: name GOT slots after their targets and thunk `.MIPS.stubs` entries |
+| GP-relative (CPIC) model: `gp`/`t9` seeded at function entries so gp-relative GOT and small-data references resolve | **Done** | `MipsGpAnalyzer` seeds `gp` = `_mips_gp_value` and `t9` = function entry (PIC ABI); `MipsGotAnalyzer` renames GOT slots `__got_<target>`; measured on libGLcore: `unaff_gp` 7→0 and `(**(code **)` call spam 78→0 in a 121-function sample |
+| `.MIPS.stubs` / PLT as named thunks | **Done** | `MipsStubsAnalyzer` decodes the `ori t8,zero,symidx` delay slot and creates `name@plt` thunks to the imported functions |
+| `.mdebug` / ECOFF for objects without DWARF | **Done** | `EcoffDebug.java` + `EcoffAnalyzer.java` (32-bit MIPS ELF `.mdebug`); parameter/local records parsed and parameter names applied; remaining MIPS storage classes mapped for EXEC statics; upstream #1379 never merged; #356 still open |
+| N32 ABI conventions (struct returns, varargs, paired f/GPR argument slots) | **Done** | `mips64_32_n32.cspec` rewritten to the SGI MIPSpro N32 ABI (007-2816-005), cross-checked against clang 21 `-mabi=n32 -EB` codegen; `N32CallingConventionTest` |
+| Corpus regression harness | **Done** | `work/inventory/` — per-object inventory dumps, baseline + corpus TSV diffing; see AGENTS.md |
 | IRIX `libc.so.1` loader parse (#1527, `.MIPS.options`) | **Untested** | our fixtures parse; libc.so.1 should be added to the smoke matrix |
 
 ## Harvest list (unmerged upstream work worth porting)
@@ -41,6 +45,9 @@ ghidra-12.1.2 (tag Ghidra_12.1.2_build)
 | [#1527](https://github.com/NationalSecurityAgency/ghidra/issues/1527) | IRIX `libc.so.1` parse failure (`.MIPS.options`, `.msym`) | loader coverage |
 | [chaoticgd/ccc](https://github.com/chaoticgd/ccc), [N64Recomp](https://github.com/N64Recomp/N64Recomp), [spimdisasm](https://github.com/Decompollaborate/spimdisasm) | mdebug parsers; STABS `text_end`; `farthestBranch` function-end rules | proven extraction/insertion techniques for the `.mdebug` and stripped-binary paths |
 | [ghidra-emotionengine-reloaded](https://github.com/chaoticgd/ghidra-emotionengine-reloaded) | `StabsImporter` creates functions with explicit `[low, high)` bodies | the same pattern now implemented in the DWARF importer |
+
+SGI reference documentation (ABI handbooks, MIPSpro, dynamic linking) lives in the
+private `irix7/reference` repo (techpub archive, never published).
 
 ## Design notes
 
