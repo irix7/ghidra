@@ -35,7 +35,8 @@ mkdir -p "$PATCH"
     "$BASE/src/main/java/ghidra/app/plugin/core/analysis/EcoffAnalyzer.java" \
     "$MIPS/src/main/java/ghidra/app/util/bin/format/elf/extend/MIPS_ElfExtension.java" \
     "$MIPS/src/main/java/ghidra/app/plugin/core/analysis/MipsInlineDispatchAnalyzer.java" \
-    "$MIPS/src/main/java/ghidra/app/plugin/core/analysis/MipsIndirectTailCallAnalyzer.java"
+    "$MIPS/src/main/java/ghidra/app/plugin/core/analysis/MipsIndirectTailCallAnalyzer.java" \
+    "$MIPS/src/main/java/ghidra/app/plugin/core/analysis/MipsGpAnalyzer.java"
 cp "$BASE/data/noReturnFunctionConstraints.xml" "$BASE/data/MipsFunctionsThatDoNotReturn" \
     "$DIST/Ghidra/Features/Base/data/"
 printf 'IRIX patch compiled into %s\n' "$PATCH"
