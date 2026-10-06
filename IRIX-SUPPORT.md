@@ -94,6 +94,9 @@ Scripts live in `work/scripts/` on the development host (not committed):
 `Classify.java` (compare hand-asm bodies to DWARF ranges), `VerifyDwarf.java`,
 `CheckAsmFlow.java`, `DumpBody.java`, `CallTargetLabels.java`, and the unit tests
 `DWARFAbbreviationTest` / `MIPS_ElfExtensionTest` under the modules' `src/test`.
+Curated copies of the verification utilities live in the `irix6` repo under
+`decompiled/scripts/`; the research snapshots behind this work are committed here
+under `docs/irix/`.
 
 Current results on the 6.5.22 `unix` kernel:
 
