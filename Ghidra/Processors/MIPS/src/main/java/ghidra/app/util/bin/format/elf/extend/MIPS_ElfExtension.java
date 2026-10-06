@@ -315,6 +315,8 @@ public class MIPS_ElfExtension extends ElfExtension {
 	public static final short SHN_MIPS_ACOMMON = (short) 0xff00;
 	public static final short SHN_MIPS_TEXT = (short) 0xff01;
 	public static final short SHN_MIPS_DATA = (short) 0xff02;
+	public static final short SHN_MIPS_SCOMMON = (short) 0xff03;
+	public static final short SHN_MIPS_SUNDEFINED = (short) 0xff04;
 
 	@Override
 	public boolean canHandle(ElfHeader elf) {
@@ -366,8 +368,12 @@ public class MIPS_ElfExtension extends ElfExtension {
 		}
 
 		short sectionIndex = elfSymbol.getSectionHeaderIndex();
+		if (sectionIndex == SHN_MIPS_SUNDEFINED) {
+			// Small undefined symbol - external, allocate to EXTERNAL block
+			return Address.NO_ADDRESS;
+		}
 		if (sectionIndex == SHN_MIPS_ACOMMON || sectionIndex == SHN_MIPS_TEXT ||
-			sectionIndex == SHN_MIPS_DATA) {
+			sectionIndex == SHN_MIPS_DATA || sectionIndex == SHN_MIPS_SCOMMON) {
 			// NOTE: logic assumes no memory conflict occured during section loading
 			AddressSpace defaultSpace =
 				elfLoadHelper.getProgram().getAddressFactory().getDefaultAddressSpace();

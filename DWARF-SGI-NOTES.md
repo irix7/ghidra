@@ -127,17 +127,109 @@ passes with the patch.
 
 ## Adjacent IRIX gaps (separate from DWARF)
 
-* `Xsgi` (IP22NG1) has no `.debug_info` (only `.debug_frame`), so DWARF cannot supply
-  its symbols. Its function symbols live in SGI's proprietary symbol machinery:
-  `.msym` (`SHT_MIPS_MSYM`, 8,763 entries) and `.MIPS.symlib` (`SHT_MIPS_SYMBOL_LIB`),
-  with processor-specific `st_shndx`/`st_type` values (`PRC[0xff00..0xff02]`).
-  `ElfSymbol.hasProcessorSpecificSymbolSectionIndex()`/`MIPS_ElfExtension.calculateSymbolAddress()`
-  only handle `SHN_MIPS_ACOMMON`, `SHN_MIPS_TEXT` and `SHN_MIPS_DATA`, and `.msym`
-  entries are not read at all; hence a large fraction of functions are imported as
-  `FUN_*`. This needs an ELF symbol/section reader in the MIPS ELF extension, not a
-  DWARF change -- filed here for cross-reference with the symbol/loader work.
+`Xsgi` (IP22NG1, 6.5.7m) has no `.debug_info` (only `.debug_frame`), so DWARF cannot
+supply its names. Investigation of its symbol handling:
+
+* `Xsgi` is an `EXEC` whose `.symtab` is stripped; all names come from `.dynsym`
+  (8,763 entries). 3,852 `FUNC` symbols use `st_shndx = PRC[0xff01]` (`SHN_MIPS_TEXT`),
+  928 `OBJECT` use `PRC[0xff02]`, 4 use `PRC[0xff00]`, and the remaining 3,969 are
+  undefined. There is no symbol aliasing (all 3,852 function addresses are unique,
+  none zero-sized).
+* Stock Ghidra 12.1.2 **already applies all of them** via
+  `MIPS_ElfExtension.calculateSymbolAddress`, which handles `SHN_MIPS_ACOMMON`,
+  `SHN_MIPS_TEXT` and `SHN_MIPS_DATA`. A headless import yields 4,054/4,054 named
+  functions; full auto-analysis adds only 40 `FUN_*` (4,094 total), so the earlier
+  "only 2,391 defined FUNCs / mostly FUN_*" observation is not reproducible with this
+  binary and build. The `FUN_*` seen in a directory-wide sweep are most likely local
+  (non-exported) functions: global symbols live in `.dynsym`, but static functions
+  would only ever be in the stripped `.symtab`, and no `.msym`/`.symlib` data can
+  recover them.
+* `.msym` (`SHT_MIPS_MSYM`) is 8,763 x 8 bytes: per-`.dynsym`-entry hash metadata
+  (word 0 is a name hash; word 1 is a constant/version), i.e. a dynamic-linker lookup
+  accelerator with no independent names or addresses. `.MIPS.symlib`
+  (`SHT_MIPS_SYMBOL_LIB`) is exactly one byte per `.dynsym` entry (values 0/1/2), a
+  per-symbol flag table. Neither needs to be parsed to recover symbols.
+* The real gap found by sweeping the 6.5.7m objects: `SHN_MIPS_SUNDEFINED`
+  (`0xff04`, small undefined) and `SHN_MIPS_SCOMMON` (`0xff03`, small common) were
+  not defined or handled. 45 small-undefined symbols (eg. `GfxDevLimit`, `lbolt`,
+  `shmiq_lock`) were dropped as "Unable to place symbol"; `MIPS_ElfExtension` now maps
+  `SHN_MIPS_SUNDEFINED` to `Address.NO_ADDRESS` (allocated to the EXTERNAL block) and
+  treats `SHN_MIPS_SCOMMON` like `SHN_MIPS_ACOMMON`, per the MIPS ABI. Verified:
+  `GfxDevLimit` is now imported into the EXTERNAL block, and the Xsgi/libGLcore/unix
+  and GCC DWARF 5 imports are unchanged.
+
+## Hand-written assembly function bodies
+
+MIPSpro emits real `low_pc`/`high_pc` ranges for hand-written assembly too (the IRIX
+`LEAF`/`VECTOR`/`NESTED` macros emit `.ent`/`.end`), but the DWARF importer only used
+the range for comments and created 1-byte function stubs.  Analysis then expanded the
+stubs by flow following, which truncates exactly the constructs LOCORE relies on:
+
+* `j`/`jal` to internal labels (`elocore_exl_N`, `kpreemption`, `exception_leave`);
+* computed jumps into dispatch tables (`__glDTP_*` / `__glDTS_*` stubs inside
+  `__glDepthTestLine_asm`, `bcopy`/`ovbcopy` inside `memcpy`);
+* entries scheduled into the previous function's `jr` delay slot
+  (`restartxthread`, `cache_sync` - upstream issue #4675);
+* nested `STT_FUNC` symbols from assembler `EXPORT` macros, which become functions
+  and clip the parent at their entry (`CreateFunctionCmd.subtractBodyFromExisting`).
+
+Fix (all behind the new `Set Function Bodies From DWARF` import option, default on):
+
+1. Imported subprograms are recorded with their DWARF body ranges.
+2. Function entries inside a DWARF range that are not themselves DWARF subprograms are
+   demoted to `IMPORTED` labels (names retained; address-taken dispatch tables keep
+   working).
+3. Each function body is set from its DWARF range (intersected with loaded memory).
+4. A one-time low-priority `DWARFFunctionBodyFixupAnalyzer` re-applies the bodies after
+   the analyzers that create function entries (shared-return, constant-propagation
+   call targets) have run, since those would otherwise clip the bodies again.
+
+Result on the 6.5.22 `unix` kernel: **365/366 hand-asm functions exactly match their
+DWARF body ranges** (baseline 285/366), with zero remaining disassembly gaps.  The one
+exception, `kmiss`, keeps two `locore_eret_*` shared-return thunks (16 bytes of its
+range) because thunks are deliberately not demoted, so shared-return callers still
+decompile.  libGLcore's 47 `__glDTP_*`/`__glDTS_*` dispatch stubs are demoted into their
+parent `_asm` blob (they remain addressable labels).
+
+Standard DWARF 5 `std.o` is unchanged by the option; the option restores the old
+flow-derived behaviour when disabled.
+
+### Inline dispatch tables
+
+A second hand-asm idiom survives the body fixup as a decompiler warning: a computed jump
+into handlers that follow the dispatcher inside the same function.
+
+```
+lui   t4,0x8800
+addiu t4,t4,0x6db8      ; handler table base
+sll   t5,a0,0x3         ; index * 8
+addu  t4,t4,t5
+jr    t4                ; "Could not recover jumptable ... Too many branches"
+_nop
+```
+
+The table is code, and the index is an unbounded parameter, so neither flow following
+nor the decompiler's jump-table model recovery can bound it.  `MipsInlineDispatchAnalyzer`
+(MIPS module) recognises the address computation by backtracking over register views
+(`t4_lo` vs `t4`), disassembles the handler entries, and writes a `JumpTable` override
+plus `COMPUTED_JUMP` references so the decompiler renders a switch.  A second form loads
+the target from a PC-relative pointer table (`sll/addiu/addu/lw/jr`); those entries are
+also followed, but only when the loaded pointers land inside the containing function.
+
+Results on the 6.5.22 `unix` kernel: the `emulate_lwc1/ldc1/swc1/sdc1` and
+`fpunit_fp*load/store_{s,d}` families decompile as switches; "Could not recover
+jumptable" in the 366-function hand-asm sample dropped from 16 to 9.  The remaining
+cases are not tables: register-argument jump stubs (`jr a2`, `jr a1`), return
+trampolines computed from `ra` (`jr ra - 0x20000000` in `runcached`/`uncached`), and
+shared tails (`resumeidle`, `exception`).
 
 ## Changed files
 
 * `Ghidra/Features/Base/src/main/java/ghidra/app/util/bin/format/dwarf/DWARFAbbreviation.java`
 * `Ghidra/Features/Base/src/test/java/ghidra/app/util/bin/format/dwarf/DWARFAbbreviationTest.java`
+* `Ghidra/Features/Base/src/main/java/ghidra/app/util/bin/format/dwarf/DWARFImportOptions.java`
+* `Ghidra/Features/Base/src/main/java/ghidra/app/util/bin/format/dwarf/DWARFFunctionImporter.java`
+* `Ghidra/Features/Base/src/main/java/ghidra/app/util/bin/format/dwarf/DWARFFunctionBodyFixupAnalyzer.java`
+* `Ghidra/Processors/MIPS/src/main/java/ghidra/app/util/bin/format/elf/extend/MIPS_ElfExtension.java`
+* `Ghidra/Processors/MIPS/src/test/java/ghidra/app/util/bin/format/elf/extend/MIPS_ElfExtensionTest.java`
+* `IRIX-SUPPORT.md` (umbrella roadmap for the fork)
