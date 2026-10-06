@@ -158,7 +158,49 @@ supply its names. Investigation of its symbol handling:
   `GfxDevLimit` is now imported into the EXTERNAL block, and the Xsgi/libGLcore/unix
   and GCC DWARF 5 imports are unchanged.
 
+## Hand-written assembly function bodies
+
+MIPSpro emits real `low_pc`/`high_pc` ranges for hand-written assembly too (the IRIX
+`LEAF`/`VECTOR`/`NESTED` macros emit `.ent`/`.end`), but the DWARF importer only used
+the range for comments and created 1-byte function stubs.  Analysis then expanded the
+stubs by flow following, which truncates exactly the constructs LOCORE relies on:
+
+* `j`/`jal` to internal labels (`elocore_exl_N`, `kpreemption`, `exception_leave`);
+* computed jumps into dispatch tables (`__glDTP_*` / `__glDTS_*` stubs inside
+  `__glDepthTestLine_asm`, `bcopy`/`ovbcopy` inside `memcpy`);
+* entries scheduled into the previous function's `jr` delay slot
+  (`restartxthread`, `cache_sync` - upstream issue #4675);
+* nested `STT_FUNC` symbols from assembler `EXPORT` macros, which become functions
+  and clip the parent at their entry (`CreateFunctionCmd.subtractBodyFromExisting`).
+
+Fix (all behind the new `Set Function Bodies From DWARF` import option, default on):
+
+1. Imported subprograms are recorded with their DWARF body ranges.
+2. Function entries inside a DWARF range that are not themselves DWARF subprograms are
+   demoted to `IMPORTED` labels (names retained; address-taken dispatch tables keep
+   working).
+3. Each function body is set from its DWARF range (intersected with loaded memory).
+4. A one-time low-priority `DWARFFunctionBodyFixupAnalyzer` re-applies the bodies after
+   the analyzers that create function entries (shared-return, constant-propagation
+   call targets) have run, since those would otherwise clip the bodies again.
+
+Result on the 6.5.22 `unix` kernel: **365/366 hand-asm functions exactly match their
+DWARF body ranges** (baseline 285/366), with zero remaining disassembly gaps.  The one
+exception, `kmiss`, keeps two `locore_eret_*` shared-return thunks (16 bytes of its
+range) because thunks are deliberately not demoted, so shared-return callers still
+decompile.  libGLcore's 47 `__glDTP_*`/`__glDTS_*` dispatch stubs are demoted into their
+parent `_asm` blob (they remain addressable labels).
+
+Standard DWARF 5 `std.o` is unchanged by the option; the option restores the old
+flow-derived behaviour when disabled.
+
 ## Changed files
 
 * `Ghidra/Features/Base/src/main/java/ghidra/app/util/bin/format/dwarf/DWARFAbbreviation.java`
 * `Ghidra/Features/Base/src/test/java/ghidra/app/util/bin/format/dwarf/DWARFAbbreviationTest.java`
+* `Ghidra/Features/Base/src/main/java/ghidra/app/util/bin/format/dwarf/DWARFImportOptions.java`
+* `Ghidra/Features/Base/src/main/java/ghidra/app/util/bin/format/dwarf/DWARFFunctionImporter.java`
+* `Ghidra/Features/Base/src/main/java/ghidra/app/util/bin/format/dwarf/DWARFFunctionBodyFixupAnalyzer.java`
+* `Ghidra/Processors/MIPS/src/main/java/ghidra/app/util/bin/format/elf/extend/MIPS_ElfExtension.java`
+* `Ghidra/Processors/MIPS/src/test/java/ghidra/app/util/bin/format/elf/extend/MIPS_ElfExtensionTest.java`
+* `IRIX-SUPPORT.md` (umbrella roadmap for the fork)
