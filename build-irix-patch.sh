@@ -39,6 +39,8 @@ mkdir -p "$PATCH"
     "$REPO/Ghidra/Framework/SoftwareModeling/src/main/java/ghidra/app/plugin/processors/sleigh/SleighInstructionPrototype.java" \
     "$REPO/Ghidra/Features/Decompiler/src/main/java/ghidra/app/decompiler/DecompileCallback.java" \
     "$BASE/src/main/java/ghidra/app/plugin/core/analysis/EcoffAnalyzer.java" \
+    "$BASE/src/main/java/ghidra/app/plugin/core/disassembler/EntryPointAnalyzer.java" \
+    "$REPO/Ghidra/Framework/SoftwareModeling/src/main/java/ghidra/program/disassemble/Disassembler.java" \
     "$MIPS/src/main/java/ghidra/app/util/bin/format/elf/extend/MIPS_ElfExtension.java" \
     "$MIPS/src/main/java/ghidra/app/plugin/core/analysis/MipsInlineDispatchAnalyzer.java" \
     "$MIPS/src/main/java/ghidra/app/plugin/core/analysis/MipsIndirectTailCallAnalyzer.java" \

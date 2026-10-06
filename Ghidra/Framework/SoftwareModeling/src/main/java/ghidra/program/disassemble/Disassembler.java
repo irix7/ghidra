@@ -462,6 +462,15 @@ public class Disassembler implements DisassemblerConflictHandler {
 				break;
 			}
 
+			// A start address that is already a delay-slot instruction means a function
+			// was entered at that slot (hand-written assembly often places the next
+			// function's first instruction in the delay slot of the prior function's
+			// branch).  Such an address is considered already disassembled by the check
+			// below, so the instruction following the delay slot would never be decoded.
+			// Resume disassembly at the delay-slot fall-through first.
+			resumeDelaySlotFallThrough(addressRange.getMinAddress(), disassembledAddrs,
+				restrictedSet, initialContextValue, doFollowFlow);
+
 			if (disassembledAddrs.contains(addressRange.getMinAddress(),
 				addressRange.getMaxAddress())) {
 				continue;
@@ -471,6 +480,9 @@ public class Disassembler implements DisassemblerConflictHandler {
 
 			while (!todoSubset.isEmpty() && !monitor.isCancelled()) {
 				Address nextAddr = todoSubset.getMinAddress();
+
+				resumeDelaySlotFallThrough(nextAddr, disassembledAddrs, restrictedSet,
+					initialContextValue, doFollowFlow);
 
 				// Check if location is already on disassembly list
 				if (disassembledAddrs.contains(nextAddr)) {
@@ -513,6 +525,41 @@ public class Disassembler implements DisassemblerConflictHandler {
 			}
 		}
 		return disassembledAddrs;
+	}
+
+	/**
+	 * When {@code addr} is an existing delay-slot instruction (eg. a function entry
+	 * that hand-written assembly placed in the delay slot of the preceding function's
+	 * branch), the instruction following the delay slot has never been decoded: the
+	 * disassembler cannot flow into a delay slot and then past it.  Resume disassembly
+	 * at the delay-slot fall-through so the body of the function starting in the slot
+	 * is complete.
+	 *
+	 * @param addr address to check for a delay-slot instruction
+	 * @param disassembledAddrs addresses disassembled so far within this invocation
+	 * @param restrictedSet the set of addresses that disassembling is restricted to (may be null)
+	 * @param initialContextValue initial context value to be applied (may be null)
+	 * @param doFollowFlow flag to follow references while disassembling
+	 */
+	private void resumeDelaySlotFallThrough(Address addr, AddressSet disassembledAddrs,
+			AddressSetView restrictedSet, RegisterValue initialContextValue, boolean doFollowFlow) {
+		Instruction instr = listing.getInstructionAt(addr);
+		if (instr == null || !instr.isInDelaySlot()) {
+			return;
+		}
+		Address fallThrough = instr.getFallThrough();
+		// The local disassembledAddrs set can be optimistic (it may include addresses
+		// from a block whose instructions were not retained); the listing is the
+		// authority for whether the fall-through still needs to be decoded.
+		if (fallThrough == null || listing.getUndefinedDataAt(fallThrough) == null ||
+			(restrictedSet != null && !restrictedSet.contains(fallThrough))) {
+			return;
+		}
+		AddressSet currentSet =
+			disassemble(fallThrough, restrictedSet, initialContextValue, doFollowFlow);
+		if (!currentSet.isEmpty()) {
+			disassembledAddrs.add(currentSet);
+		}
 	}
 
 	/**

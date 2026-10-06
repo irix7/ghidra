@@ -436,8 +436,18 @@ public class EntryPointAnalyzer extends AbstractAnalyzer {
 			}
 			// no code here, re-disassemble
 			// if there is not undefined data at the entry point
-			if (program.getListing().getInstructionAt(entryPoint) != null) {
-				continue;
+			Instruction entryInstr = program.getListing().getInstructionAt(entryPoint);
+			if (entryInstr != null) {
+				// A function entry that is itself a delay-slot instruction (hand-written
+				// assembly can schedule the next function's first instruction into the
+				// delay slot of the previous function's branch) has its body left
+				// undecoded: the disassembler cannot flow into a delay slot and then past
+				// it.  Queue the entry so the delay-slot fall-through is disassembled too.
+				Address fallThrough = entryInstr.getFallThrough();
+				if (!entryInstr.isInDelaySlot() || fallThrough == null ||
+					program.getListing().getUndefinedDataAt(fallThrough) == null) {
+					continue;
+				}
 			}
 			dummyFunctionSet.add(entryPoint);
 		}

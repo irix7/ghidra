@@ -27,6 +27,7 @@ import org.junit.runners.Parameterized.Parameters;
 import ghidra.app.cmd.analysis.SharedReturnAnalysisCmd;
 import ghidra.app.cmd.function.CreateFunctionCmd;
 import ghidra.program.database.ProgramBuilder;
+import ghidra.program.disassemble.Disassembler;
 import ghidra.program.model.address.AddressSet;
 import ghidra.program.model.block.*;
 import ghidra.program.model.listing.*;
@@ -121,6 +122,34 @@ public class MipsDelaySlotFlowTest extends AbstractGhidraHeadlessIntegrationTest
 		assertEquals(new AddressSet(builder.addr("1004"), builder.addr("100f")),
 			CreateFunctionCmd.getFunctionBody(builder.getProgram(), builder.addr("1004")));
 		assertTrue(decompile(entry).contains("return 7;"));
+	}
+
+	@Test
+	public void testSlotEntryWithUndefinedFallThroughDisassembles() throws Exception {
+		// j 1020; li v0,7 -- the li is the independently entered delay slot.
+		builder.setBytes("1000", "08 00 04 08 24 02 00 07");
+		// The rest of the function body is undefined until entry-point disassembly runs.
+		builder.setBytes("1008", "24 42 00 01 03 e0 00 08 00 00 00 00");
+		builder.disassemble("1000", 8, false);
+		Instruction slot =
+			builder.getProgram().getListing().getInstructionAt(builder.addr("1004"));
+		assertTrue(slot.isInDelaySlot());
+		assertEquals(builder.addr("1008"), slot.getFallThrough());
+		assertNull("fall-through must start undefined",
+			builder.getProgram().getListing().getInstructionAt(builder.addr("1008")));
+
+		// Entry-point style disassembly seeded only at the delay-slot entry.
+		builder.tx(() -> {
+			Disassembler dis =
+				Disassembler.getDisassembler(builder.getProgram(), TaskMonitor.DUMMY, null);
+			dis.disassemble(new AddressSet(builder.addr("1004")), null, true);
+		});
+
+		Program program = builder.getProgram();
+		assertNotNull("fall-through after the delay slot must be disassembled",
+			program.getListing().getInstructionAt(builder.addr("1008")));
+		assertNotNull("the rest of the body must be disassembled",
+			program.getListing().getInstructionAt(builder.addr("1010")));
 	}
 
 	@Test
