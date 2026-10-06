@@ -19,9 +19,12 @@ import static ghidra.app.util.bin.format.dwarf.DWARFTag.*;
 import static ghidra.app.util.bin.format.dwarf.attribs.DWARFAttributeId.*;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 
+import ghidra.app.plugin.core.analysis.AutoAnalysisManager;
 import ghidra.app.util.bin.format.dwarf.DWARFFunction.CommitMode;
 import ghidra.app.util.bin.format.dwarf.expression.DWARFExpression;
 import ghidra.app.util.bin.format.dwarf.expression.DWARFExpressionException;
@@ -60,6 +63,7 @@ public class DWARFFunctionImporter {
 	private Set<Long> processedOffsets = new HashSet<>();
 	private Set<Address> functionsProcessed = new HashSet<>();
 	private Set<Address> variablesProcesesed = new HashSet<>();
+	private List<DWARFFunction> importedFunctions = new ArrayList<>();
 
 	private TaskMonitor monitor;
 
@@ -142,6 +146,45 @@ public class DWARFFunctionImporter {
 				Msg.info(this, "DIE info:\n" + diea.toString());
 			}
 		}
+
+		if (importOptions.isSetFunctionBodies()) {
+			scheduleFunctionBodyFixup();
+		}
+	}
+
+	/**
+	 * Applies the PC ranges declared by DWARF subprograms to the corresponding Ghidra
+	 * function bodies.  A flow-derived body can be incomplete for hand-written assembly
+	 * (jump tables, code reached only through computed jumps, etc.), while the DWARF range
+	 * is authoritative.
+	 * <p>
+	 * The fixup is applied immediately, and a one-time {@link DWARFFunctionBodyFixupAnalyzer}
+	 * is scheduled at low priority to re-apply the ranges after other analyzers have run,
+	 * since those analyzers can create function entries inside the DWARF ranges and clip
+	 * the bodies.
+	 */
+	private void scheduleFunctionBodyFixup() {
+		List<DWARFFunctionBodyFixupAnalyzer.FunctionBodyInfo> infos = new ArrayList<>();
+		Set<Address> entries = new HashSet<>();
+		AddressSet allBodies = new AddressSet();
+		for (DWARFFunction dfunc : importedFunctions) {
+			AddressSet body = new AddressSet(dfunc.getBody());
+			infos.add(new DWARFFunctionBodyFixupAnalyzer.FunctionBodyInfo(dfunc.address, body,
+				dfunc.name.getName()));
+			if (!body.isEmpty()) {
+				allBodies.add(body);
+			}
+			entries.add(dfunc.address);
+		}
+		if (allBodies.isEmpty()) {
+			return;
+		}
+
+		DWARFFunctionBodyFixupAnalyzer.apply(currentProgram, infos, entries,
+			msg -> Msg.warn(this, msg));
+		AutoAnalysisManager.getAnalysisManager(currentProgram)
+				.scheduleOneTimeAnalysis(new DWARFFunctionBodyFixupAnalyzer(infos, entries),
+					allBodies);
 	}
 
 	private void markAllChildrenAsProcessed(DebugInfoEntry die) {
@@ -187,6 +230,8 @@ public class DWARFFunctionImporter {
 			// if false, the stub ghidra function could not be found or created
 			return;
 		}
+
+		importedFunctions.add(dfunc);
 
 		dfunc.runFixups();
 
