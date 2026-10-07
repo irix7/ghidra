@@ -46,9 +46,28 @@ ghidra-12.1.2 (tag Ghidra_12.1.2_build)
 | [#1527](https://github.com/NationalSecurityAgency/ghidra/issues/1527) | IRIX `libc.so.1` parse failure (`.MIPS.options`, `.msym`) | loader coverage |
 | [chaoticgd/ccc](https://github.com/chaoticgd/ccc), [N64Recomp](https://github.com/N64Recomp/N64Recomp), [spimdisasm](https://github.com/Decompollaborate/spimdisasm) | mdebug parsers; STABS `text_end`; `farthestBranch` function-end rules | proven extraction/insertion techniques for the `.mdebug` and stripped-binary paths |
 | [ghidra-emotionengine-reloaded](https://github.com/chaoticgd/ghidra-emotionengine-reloaded) | `StabsImporter` creates functions with explicit `[low, high)` bodies | the same pattern now implemented in the DWARF importer |
+| [bb33bad196](https://github.com/NationalSecurityAgency/ghidra/commit/bb33bad196) | GP-7136 join-space dead-Varnode guard in `Heritage::processJoins` | **Ported** — fixes the `ProcChangeHosts` native decompiler crash |
+| [6740b89926](https://github.com/NationalSecurityAgency/ghidra/commit/6740b89926) | GP-7063 new symbol-conflict detection | **Partly ported** — only the `buildDynamicSymbol` locked-Varnode guard deletion (fixes `ProcXineramaShapeMask..NBE`); the conflict-model rework is not in 12.1.2 |
 
 SGI reference documentation (ABI handbooks, MIPSpro, dynamic linking) lives in the
 private `irix7/reference` repo (techpub archive, never published).
+
+## Upstream version policy
+
+The fork stays pinned to Ghidra 12.1.2 (project-format compatibility) and backports
+specific upstream fixes as they are needed, tracked in the harvest list above.  12.1.2
+predates the recent decompiler join/conflict reworks (GP-7063, GP-7136, ...), and those
+land on upstream `master` — not in the 12.1.3/12.1.4 patch releases (the DWARF package is
+byte-identical across 12.1.2..12.1.4 and the decompiler churn there is ~100 lines).  So
+"upgrade to the latest release" would not pick up the fixes we actually need, while
+jumping to `master` is a very large, un-released rebase (8k+ lines of decompiler churn,
+project-format risk) for a fixed IRIX corpus.  Reassess a version move only when a needed
+fix ships in a release and cannot be backported cleanly; do it as a dedicated branch with
+a full corpus re-verification and project migration.
+
+The native toolchain paths (`/nix/store/...`) are ephemeral and may be garbage-collected
+mid-session; resolve `g++`/`make`/`bison`/`flex` through `nix-shell -p` or re-query
+`/nix/store` at build time rather than pinning the store paths.
 
 ## Design notes
 
@@ -138,9 +157,12 @@ Current results on the 6.5.22 `unix` kernel:
 * IRIX 6.5.22 ABI: the driver-CD `IP22NG1/Xsgi` is a **6.5.22m** build despite the path
   (it embeds `IRIX 6.5:...built .../6.5.22m/...`), and it is **N32** — `e_flags
   0x20000024` (`EF_MIPS_ABI2`), language `MIPS:BE:64:64-32addr`, unlike the 6.5.7m IP22NG1
-  o32 objects.  Its `ProcXineramaShapeMask..NBE @0x103733d0` does *not* fail like
-  `ProcChangeHosts`: it is a recoverable decompiler error ("Trying to build dynamic symbol
-  on locked varnode", `funcdata_varnode.cc`), so the two named stalls are different classes.
+  o32 objects.  Its `ProcXineramaShapeMask..NBE @0x103733d0` was a *different* failure
+  class: a recoverable decompiler error ("Trying to build dynamic symbol on locked
+  varnode", `funcdata_varnode.cc`).  Dropping that guard (upstream GP-7063) makes it
+  decompile; a full Xsgi (6.5.22) re-sweep is 3,895/3,896 with every previously-succeeding
+  function byte-identical, the one remaining failure being an unrelated `wchar_t`
+  low-level error (`bdfReadProperties..KO`).
 
 Build note: run `bash build-irix-patch.sh <writable-ghidra-12.1.2-directory>` to compile
 this fork's Java changes into `$DIST/Ghidra/patch` and copy the MIPS no-return data
