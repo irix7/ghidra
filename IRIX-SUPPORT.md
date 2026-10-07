@@ -20,6 +20,7 @@ ghidra-12.1.2 (tag Ghidra_12.1.2_build)
 | Hand-asm function bodies: DWARF `low_pc`/`high_pc` now applied to Ghidra bodies; nested non-DWARF entries demoted including strictly nested thunks; re-applied late so other analyzers cannot clip | **Done** | `DWARFFunctionImporter.java`, `DWARFFunctionBodyFixupAnalyzer.java`, `DWARFImportOptions` |
 | `.msym` / `.MIPS.symlib` | **Not needed** | They are per-`.dynsym` hash/flag tables; see `DWARF-SGI-NOTES.md`.  Stock Ghidra already applies all `SHN_MIPS_TEXT` symbols |
 | Jump tables / `UNRECOVERED_JUMPTABLE` (`jr t4`, gp-relative tables) | **Done** | `MipsInlineDispatchAnalyzer` recovers inline code tables and PC-relative pointer tables inside a function; `MipsIndirectTailCallAnalyzer` types bare `jr a1`/`jr a2` stubs as `CALL_RETURN` (minimal harvest of upstream PR #8547) |
+| SGI prelinked DSO `R_MIPS_REL32`: the in-place addend is already the resolved absolute address | **Done** | `MIPS_ElfRelocationHandler` no longer re-adds the symbol value for SGI prelinked objects (`.MIPS.symlib` / `DT_MIPS_SYMBOL_LIB`); this recovers code-pointer dispatch tables in libgl (`__*_zspan_*_asm`) that previously decompiled as `halt_baddata` |
 | Delay-slot function entries (entry is the previous function's `jr` delay slot) | **Done** for disassembly/bodies; conditional-slot block flow still open | `EntryPointAnalyzer`+`Disassembler` resume at the slot fall-through so the entry's body decodes to its DWARF range (`restartxthread` 4 → 92 bytes); `MipsDelaySlotFlowTest`. A branch whose *target* is a delay slot previously crashed the native decompiler; fixed (see Design notes) |
 | Non-returning IRIX asm (`panic`, `sppanic`, `_r4600_2_0_cacheop_eret`) | **Done** | `MipsFunctionsThatDoNotReturn` + `noReturnFunctionConstraints.xml`; ECOFF import re-runs the known no-return pass on its own entries |
 | DWARF asm signature locking (`void f(void)` committed as definite for asm subprograms) | **Done** | `NO_PARAMS` commit mode leaves unknown signatures recoverable; upstream #9476 |
@@ -154,6 +155,11 @@ Current results on the 6.5.22 `unix` kernel:
   stub families) and are left alone.
 * Native decompiler: `ProcChangeHosts` (Xsgi 6.5.7m) now decompiles; a full Xsgi-657m sweep
   is 7,140/7,140 (was 7,139/7,140, the single failure being `ProcChangeHosts`).
+* SGI prelinked `R_MIPS_REL32`: libgl N32's 2,316 in-place addends now all resolve inside
+  the image (previously 0 did); the ~20 `__do_zspan_*_asm`/`__pat_zspan_*_asm` dispatchers
+  decompile on N32 and o32 (no `halt_baddata`, no unresolved jump).  The change is gated on
+  SGI markers and is a no-op for the `unix` kernel (ET_EXEC, zero relocations) and non-SGI
+  MIPS ELF; the libGLcore-657m inventory and the rest of libgl are otherwise unchanged.
 * IRIX 6.5.22 ABI: the driver-CD `IP22NG1/Xsgi` is a **6.5.22m** build despite the path
   (it embeds `IRIX 6.5:...built .../6.5.22m/...`), and it is **N32** — `e_flags
   0x20000024` (`EF_MIPS_ABI2`), language `MIPS:BE:64:64-32addr`, unlike the 6.5.7m IP22NG1
