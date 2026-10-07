@@ -492,3 +492,23 @@ All scripts are in `work/scripts/`; run under
 4. If the flow body overlaps a mid-function ELF label stub, the non-overlap rule clips it
    at that entry (`CreateFunctionCmd.java:436-443`).
 5. Nothing puts the DWARF range back afterwards, so the truncation is permanent.
+
+---
+
+## Addendum (later session)
+
+The ranked causes above have since been implemented in the fork, so treat C1–C4 as fixed and
+this report as the original investigation:
+
+* **C1/C2** — `DWARFFunctionBodyFixupAnalyzer` + the `Set Function Bodies From DWARF`
+  option apply the DWARF ranges and demote nested non-DWARF entries; the kernel's hand-asm
+  bodies are 366/366.
+* **C3** — `Disassembler`/`EntryPointAnalyzer` now resume at a delay-slot entry's
+  fall-through, so `restartxthread` reaches its full 92-byte range.
+* **C4** — `MipsInlineDispatchAnalyzer` recovers in-function dispatch tables.  A related
+  failure (libgl's `__*_zspan_*_asm` tables) was **not** a flow issue at all: SGI prelinked
+  `R_MIPS_REL32` in-place addends are already absolute, and Ghidra re-added the symbol
+  value, corrupting the pointer tables; fixed in `MIPS_ElfRelocationHandler`.
+* The "branch into a delay slot" native crash (the harshest #4675 form) was a missing
+  upstream guard, ported as GP-7136.  The conditional-slot block-model limitation (the
+  ignored `MipsDelaySlotFlowTest` case) remains open.
