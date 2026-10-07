@@ -1302,8 +1302,6 @@ void Funcdata::findLinkedVarnodes(SymbolEntry *entry,vector<Varnode *> &res) con
 void Funcdata::buildDynamicSymbol(Varnode *vn)
 
 {
-  if (vn->isTypeLock()||vn->isNameLock())
-    throw RecovError("Trying to build dynamic symbol on locked varnode");
   if (!isHighOn())
     throw RecovError("Cannot create dynamic symbols until decompile has completed");
   HighVariable *high = vn->getHigh();
