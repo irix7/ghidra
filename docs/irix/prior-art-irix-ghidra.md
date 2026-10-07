@@ -499,3 +499,13 @@ numbers, and our DWARF-pinned bodies beat every flow heuristic).  Two ideas are 
 keeping: N64Recomp's mdebug parser as an independent range oracle, and the GOT-loaded
 absolute jump-table shape m2c cannot read (moot in Ghidra now that the SGI-prelinked
 `R_MIPS_REL32` fix recovers the `__*_zspan_*_asm` dispatchers).
+
+**Cross-check (oracle vs `EcoffDebug`, 8 o32 fixtures).**  The N64Recomp-derived oracle
+(`work/prior/mdump-iri/`) matches `EcoffDebug` on every common procedure.  Every
+disagreement is a case where the linear oracle is provably weaker: it reads an inner
+`ST_END` for `libdmedia.so` (all 700 sizes short), and it cannot bind grouped
+`PROC,PROC,PROC,END,END,END` records in `libgl` (40 procedures lost).  `EcoffDebug` is
+PDR/AUX-driven, and already tolerates a non-zero `vstamp` (0x715/0x728) and interleaved
+`ST_LABEL`/`ST_STATIC` between `ST_PROC` and `ST_END`, so **no production change was
+needed**; three regressions were pinned instead (`EcoffDebugTest`, 23 tests).  The oracle
+is kept as an independent second opinion for the ECOFF path.

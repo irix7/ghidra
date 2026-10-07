@@ -146,6 +146,68 @@ public class EcoffDebugTest {
 		return b.array();
 	}
 
+	/**
+	 * A procedure {@code run} whose stProc is followed by an interleaved stLabel
+	 * (alternate entry) and stStatic (local static) before its matching stEnd.
+	 * IRIX MIPSpro emits this; a linear stProc/stEnd scan would truncate the
+	 * procedure to size 0, but the PDR's auxiliary record still binds the stEnd.
+	 */
+	public static byte[] fixtureWithInterleavedRecords(boolean little, boolean auxBig) {
+		byte[] bytes = fixture(little, auxBig);
+		ByteBuffer b = ByteBuffer.wrap(bytes)
+				.order(little ? ByteOrder.LITTLE_ENDIAN : ByteOrder.BIG_ENDIAN);
+		sym(b, SYM + 24, 4, 0x1004, EcoffDebug.ST_LABEL, 1, EcoffDebug.INDEX_NIL, little);
+		sym(b, SYM + 36, 8, 0x10, EcoffDebug.ST_STATIC, 2, EcoffDebug.INDEX_NIL, little);
+		sym(b, SYM + 48, 16, 0x18, EcoffDebug.ST_END, 1, 1, little);
+		ByteBuffer aux =
+			b.duplicate().order(auxBig ? ByteOrder.BIG_ENDIAN : ByteOrder.LITTLE_ENDIAN);
+		aux.putInt(AUX, 5); // first local symbol after run's matching stEnd (slot 4)
+		return bytes;
+	}
+
+	/**
+	 * Two procedures emitted as a group (stProc A, stProc B) with their stEnd
+	 * records reversed (stEnd B, stEnd A), as seen in IRIX hand-written assembly
+	 * (e.g. libgl fast2d.s). Each PDR's auxiliary record selects its own stEnd.
+	 */
+	public static byte[] fixtureWithOutOfOrderProcedures(boolean little, boolean auxBig) {
+		final int OPD = 96, OSYM = 200, OAUX = 260, OSS = 268, OEXTSS = 292, OFD = 304, OEXT = 376;
+		ByteBuffer b = ByteBuffer.allocate(400)
+				.order(little ? ByteOrder.LITTLE_ENDIAN : ByteOrder.BIG_ENDIAN);
+		b.putShort(0, (short)0x7009);
+		b.putShort(2, (short)0x715);
+		table(b, 24, 2, OPD);
+		table(b, 32, 5, OSYM);
+		table(b, 48, 2, OAUX);
+		table(b, 56, 16, OSS);
+		table(b, 64, 12, OEXTSS);
+		table(b, 72, 1, OFD);
+		table(b, 88, 1, OEXT);
+		b.putInt(OPD, 0x1000).putInt(OPD + 4, 1);
+		b.putInt(OPD + 52, 0x1010).putInt(OPD + 56, 2);
+		b.position(OSS);
+		b.put("\0\0\0\0a.c\0run\0two\0".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+		b.position(OEXTSS);
+		b.put("\0external\0".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+		sym(b, OSYM, 0, 0, EcoffDebug.ST_FILE, 1, 5, little);
+		sym(b, OSYM + 12, 4, 0x1000, EcoffDebug.ST_PROC, 1, 0, little);
+		sym(b, OSYM + 24, 8, 0x1010, EcoffDebug.ST_PROC, 1, 1, little);
+		sym(b, OSYM + 36, 8, 0x30, EcoffDebug.ST_END, 1, 2, little);
+		sym(b, OSYM + 48, 8, 0x20, EcoffDebug.ST_END, 1, 1, little);
+		b.putInt(OFD, 0x1000).putInt(OFD + 4, 0).putInt(OFD + 8, 4).putInt(OFD + 12, 12);
+		b.putInt(OFD + 16, 0).putInt(OFD + 20, 5);
+		b.putShort(OFD + 42, (short)2);
+		b.putInt(OFD + 48, 2);
+		b.put(OFD + 60, (byte)(auxBig ? (little ? 0x80 : 1) : 0));
+		ByteBuffer aux =
+			b.duplicate().order(auxBig ? ByteOrder.BIG_ENDIAN : ByteOrder.LITTLE_ENDIAN);
+		aux.putInt(OAUX, 5);     // A's matching stEnd is slot 4
+		aux.putInt(OAUX + 4, 4); // B's matching stEnd is slot 3
+		b.putShort(OEXT + 2, (short)-1);
+		sym(b, OEXT + 4, 1, 0x3000, 1, 3, EcoffDebug.INDEX_NIL, little);
+		return b.array();
+	}
+
 	private static void sym(ByteBuffer b, int pos, int iss, int value, int kind, int storage,
 		int index, boolean little) {
 		b.putInt(pos, iss).putInt(pos + 4, value);
@@ -469,5 +531,54 @@ public class EcoffDebugTest {
 			()
 				-> EcoffDebug.parse(
 					new ByteArrayProvider(fixture(false, true)), ORIGIN, false, monitor));
+	}
+
+	/** IRIX MIPSpro uses a non-zero HDRR version stamp (0x715 / 0x728). */
+	@Test
+	public void testIrixNonZeroVersionStampIsAccepted() throws Exception {
+		for (int vstamp : new int[] {0x715, 0x728}) {
+			for (boolean little : new boolean[] {false, true}) {
+				byte[] bytes = fixture(little, !little);
+				ByteBuffer.wrap(bytes)
+						.order(little ? ByteOrder.LITTLE_ENDIAN : ByteOrder.BIG_ENDIAN)
+						.putShort(2, (short)vstamp);
+				var f = parse(bytes, little).files().get(0);
+				assertEquals("run", f.procedures().get(0).symbol().name());
+				assertEquals(16, f.procedures().get(0).size());
+			}
+		}
+	}
+
+	@Test
+	public void testInterleavedLabelAndStaticDoNotTruncateProcedure() throws Exception {
+		for (boolean little : new boolean[] {false, true}) {
+			for (boolean auxBig : new boolean[] {false, true}) {
+				var f = parse(fixtureWithInterleavedRecords(little, auxBig), little).files().get(0);
+				assertEquals(EcoffDebug.ST_LABEL, f.symbols().get(2).kind());
+				assertEquals(EcoffDebug.ST_STATIC, f.symbols().get(3).kind());
+				var run = f.procedures().get(0);
+				assertEquals("run", run.symbol().name());
+				assertEquals(0x18, run.size());
+			}
+		}
+	}
+
+	@Test
+	public void testOutOfOrderGroupedProceduresAreRecovered() throws Exception {
+		for (boolean little : new boolean[] {false, true}) {
+			for (boolean auxBig : new boolean[] {false, true}) {
+				var f =
+					parse(fixtureWithOutOfOrderProcedures(little, auxBig), little).files().get(0);
+				assertEquals(2, f.procedures().size());
+				var a = f.procedures().get(0);
+				var b = f.procedures().get(1);
+				assertEquals("run", a.symbol().name());
+				assertEquals(0x1000, a.address());
+				assertEquals(0x20, a.size());
+				assertEquals("two", b.symbol().name());
+				assertEquals(0x1010, b.address());
+				assertEquals(0x30, b.size());
+			}
+		}
 	}
 }
