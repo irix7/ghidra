@@ -192,12 +192,13 @@ Fix (all behind the new `Set Function Bodies From DWARF` import option, default 
    the analyzers that create function entries (shared-return, constant-propagation
    call targets) have run, since those would otherwise clip the bodies again.
 
-Result on the 6.5.22 `unix` kernel: **365/366 hand-asm functions exactly match their
-DWARF body ranges** (baseline 285/366), with zero remaining disassembly gaps.  The one
-exception, `kmiss`, keeps two `locore_eret_*` shared-return thunks (16 bytes of its
-range) because thunks are deliberately not demoted, so shared-return callers still
-decompile.  libGLcore's 47 `__glDTP_*`/`__glDTS_*` dispatch stubs are demoted into their
-parent `_asm` blob (they remain addressable labels).
+Result on the 6.5.22 `unix` kernel: **366/366 hand-asm functions exactly match their
+DWARF body ranges** (baseline 285/366), with zero remaining disassembly gaps.  Strictly
+nested thunks are demoted to labels like any other nested entry (the `locore_eret_*`
+shared-return jumps inside `kmiss` no longer clip it), so the parent keeps its full range
+while shared-return callers still decompile.  libGLcore's 47 `__glDTP_*`/`__glDTS_*`
+dispatch stubs are demoted into their parent `_asm` blob (they remain addressable
+labels).
 
 Standard DWARF 5 `std.o` is unchanged by the option; the option restores the old
 flow-derived behaviour when disabled.
