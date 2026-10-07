@@ -50,6 +50,12 @@ ghidra-12.1.2 (tag Ghidra_12.1.2_build)
 | [bb33bad196](https://github.com/NationalSecurityAgency/ghidra/commit/bb33bad196) | GP-7136 join-space dead-Varnode guard in `Heritage::processJoins` | **Ported** — fixes the `ProcChangeHosts` native decompiler crash |
 | [6740b89926](https://github.com/NationalSecurityAgency/ghidra/commit/6740b89926) | GP-7063 new symbol-conflict detection | **Partly ported** — only the `buildDynamicSymbol` locked-Varnode guard deletion (fixes `ProcXineramaShapeMask..NBE`); the conflict-model rework is not in 12.1.2 |
 
+Prior-art tooling (`spimdisasm`, `m2c`, `print-mdebug`, N64Recomp, `ccc`, `fsn`, the
+Ghidra mdebug/PS2 extensions) was empirically tested on 7 October 2026 — see
+`docs/irix/prior-art-irix-ghidra.md` §7.  None is adoptable wholesale; three independently
+confirm our ECOFF numbers (3,218 PDRs / 3,184 unique addresses), and N64Recomp's mdebug
+parser is the one component worth a small port as an independent range oracle.
+
 SGI reference documentation (ABI handbooks, MIPSpro, dynamic linking) lives in the
 private `irix7/reference` repo (techpub archive, never published).
 

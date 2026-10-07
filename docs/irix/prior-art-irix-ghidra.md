@@ -472,3 +472,30 @@ Top-level takeaway: the ecosystem gives us proven *extraction* (mdebug/STABS
 sizes and DWARF ranges) and proven *Ghidra insertion* (`CreateFunctionCmd` with
 explicit range / `setBody`), but nobody has joined them for SGI/MIPSpro. The
 missing piece is ours to build and is small.
+
+---
+
+## 7. Empirical test of the prior art (7 October 2026)
+
+Every runnable tool above was installed and run against our IRIX 6.5.7m fixtures
+(N32 `libgl-657m-n32.so`, o32 `libGLcore.so` / `libGLcore-657m-o32.so`, the N32 `unix`
+kernel). Clones/builds under a scratch `/dev/shm` tree; nothing adopted without evidence.
+
+| tool | ran? | result on IRIX | verdict |
+| --- | --- | --- | --- |
+| spimdisasm 1.42.4 | yes | SGI **ELF** OK, but **no `.mdebug`/`.symlib`** support (reads `.dynsym`/`.symtab` `st_size`).  o32 `libGLcore`: function **set 3184/3184** and sizes **3046/3047** match our `EcoffDebug`.  **Stock fails catastrophically on the `unix` kernel** (307 of 366): a size‑4 `nop` stub (`assbuffer`) makes `_findFunctions_checkFunctionEnded`'s `offset+8 == start+size` unsatisfiable, so it swallows the remaining 2.7 MB; a `size<=4` guard fixes it (→ 9,734 functions).  With ELF `st_size`: 351/366 exact; pure `farthestBranch`/`jr $ra` heuristics only **158/366 (43%)**. | adopt as oracle; confirms trusting debug/`st_size` over flow |
+| m2c (matt-kempster) | yes | o32 straight-line and GP-relative-table functions decompile well (`arcs_write` clean; `__glNptAntiAliasLineRGBA` full once the `.gpword` table is supplied).  **N32 PIC fails**: the `__do_zspan_*_asm` dispatchers use a **GOT-loaded absolute** jump table and m2c asserts (`jtbl list must not be empty`); it also needs a context header and has no SGI/N32 `$t4`/`$t9` model. | partial / mine-for-ideas |
+| print-mdebug (Rozelette) | yes | parses SGI `.mdebug` with **0 errors**, 3,218 PDRs / 216 FDs.  Confirms the PDR `adr` is **file-descriptor-relative** (`fd.adr + pdr.adr`) — the quirk our `EcoffDebug` already applies. | adopt as verifier |
+| N64Recomp mdebug parser | yes | magic `0x7009` matches; gated out only by `vstamp != 0` (IRIX 0x728/0x715).  Relaxed, and tolerating `ST_LABEL`/`ST_STATIC` between `ST_PROC` and `ST_END`, it recovers **3,184/3,184 exact** procedure ranges — an independent cross-check of `EcoffDebug`. | adopt as a 2-line port for cross-checking |
+| ccc `stdump` | built | dead-end: `src/ccc/elf.cpp` has no `e_ident[EI_DATA]` handling (reads our BE headers as LE) and its mdebug check is LE-only (`fBigEndian` rejected). | dead-end |
+| fsn (vitorpy) | yes | not Ghidra scripts (standalone Python + `objdump`); hardcodes fsn's GP so it is wrong on our binaries; first-`jr ra` end rule is strictly weaker than spimdisasm's; no `CONCAT44` fixer. | mine the prose checklist only |
+| ghidra-emotionengine-reloaded | builds on 12.1.2 | its explicit-range `StabsImporter` is exactly the technique our `DWARFFunctionBodyFixupAnalyzer`/`EcoffAnalyzer` now implement. | superseded (reference only) |
+| ghidra_mdebug (astrelsky) | fails | targets Ghidra 9.2; two `dwarf4.next` imports removed in 12.1.2; no body logic. | dead-end (confirmed) |
+| CodeMatcher, XeXe, libultra-mdebug, ghidra-allegrex, psp-ghidra-scripts, iris, medusa | — | LE/PS2-only, labels-only, or a lone `SHN_MIPS_SUNDEFINED` constant. | dead-end |
+
+Net: **no tool is adoptable wholesale for IRIX** — our fork already equals or beats each
+(spimdisasm/N64Recomp/print-mdebug independently confirm our 3,218 PDR / 3,184 unique
+numbers, and our DWARF-pinned bodies beat every flow heuristic).  Two ideas are worth
+keeping: N64Recomp's mdebug parser as an independent range oracle, and the GOT-loaded
+absolute jump-table shape m2c cannot read (moot in Ghidra now that the SGI-prelinked
+`R_MIPS_REL32` fix recovers the `__*_zspan_*_asm` dispatchers).
