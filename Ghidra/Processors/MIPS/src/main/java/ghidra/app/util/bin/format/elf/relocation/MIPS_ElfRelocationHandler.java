@@ -367,7 +367,19 @@ public class MIPS_ElfRelocationHandler
 					}
 				}
 
-				newValue = value + addend;
+				// SGI IRIX prelinked shared objects store the already-resolved absolute
+				// link-time address in the in-place addend.  The symbol only identifies
+				// the reference, so adding its value would double-count it.
+				boolean prelinkedAbsolute =
+					elfRelocationContext.extractAddend() && isSgiPrelinked(elf) &&
+						symbolIndex != 0 && symbolValue != 0 && addend != 0;
+
+				if (prelinkedAbsolute) {
+					newValue = addend + elfRelocationContext.getImageBaseWordAdjustmentOffset();
+				}
+				else {
+					newValue = value + addend;
+				}
 
 				if (saveValue) {
 					elfRelocationContext.savedAddend = newValue;
@@ -377,7 +389,8 @@ public class MIPS_ElfRelocationHandler
 					status = Status.APPLIED;
 
 					// Handle possible offset-pointer use
-					if (symbolIndex != 0 && addend != 0 && !elfSymbol.isSection()) {
+					if (!prelinkedAbsolute && symbolIndex != 0 && addend != 0 &&
+						!elfSymbol.isSection()) {
 						// create offset-pointer and resulting offset-reference
 						warnExternalOffsetRelocation(program, relocationAddress, symbolAddr,
 							symbolName, addend, log);
@@ -731,6 +744,27 @@ public class MIPS_ElfRelocationHandler
 			MIPS_ElfRelocationContext elfRelocationContext) {
 		return (type == MIPS_ElfRelocationType.R_MIPS16_26 &&
 			elfRelocationContext.getElfHeader().isRelocatable());
+	}
+
+	/**
+	 * Determine if the specified ELF is an SGI IRIX "prelinked" object.  Such
+	 * objects carry the SGI-specific {@code .MIPS.symlib} section and store fully
+	 * resolved absolute link-time addresses in the in-place addend of their
+	 * R_MIPS_REL32 relocations, so the symbol value must not be re-added.
+	 * 
+	 * @param elf ELF header
+	 * @return true if SGI IRIX prelinked object
+	 */
+	private static boolean isSgiPrelinked(ElfHeader elf) {
+		if (elf.isRelocatable()) {
+			return false;
+		}
+		if (elf.getSection(".MIPS.symlib") != null) {
+			return true;
+		}
+		ElfDynamicTable dynamicTable = elf.getDynamicTable();
+		return dynamicTable != null &&
+			dynamicTable.containsDynamicValue(MIPS_ElfExtension.DT_MIPS_SYMBOL_LIB);
 	}
 
 	private int unshuffle(int value, MIPS_ElfRelocationType type,

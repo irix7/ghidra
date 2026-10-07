@@ -42,6 +42,7 @@ mkdir -p "$PATCH"
     "$BASE/src/main/java/ghidra/app/plugin/core/disassembler/EntryPointAnalyzer.java" \
     "$REPO/Ghidra/Framework/SoftwareModeling/src/main/java/ghidra/program/disassemble/Disassembler.java" \
     "$MIPS/src/main/java/ghidra/app/util/bin/format/elf/extend/MIPS_ElfExtension.java" \
+    "$MIPS/src/main/java/ghidra/app/util/bin/format/elf/relocation/MIPS_ElfRelocationHandler.java" \
     "$MIPS/src/main/java/ghidra/app/plugin/core/analysis/MipsInlineDispatchAnalyzer.java" \
     "$MIPS/src/main/java/ghidra/app/plugin/core/analysis/MipsIndirectTailCallAnalyzer.java" \
     "$MIPS/src/main/java/ghidra/app/plugin/core/analysis/MipsGpAnalyzer.java" \
